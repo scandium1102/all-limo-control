@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# ROS
+build/
+devel/
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# System
+.DS_Store
