@@ -1,0 +1,30 @@
+<launch>
+
+  <!-- Gazebo 空世界 + LIMO 模型 -->
+  <include file="$(find limo_gazebo_sim)/launch/limo_ackerman.launch"/>
+  <node pkg="gazebo_ros" type="spawn_model" name="spawn_limo" output="screen"
+        args="-database limo_ackerman -model limo -x 0 -y 0 -z 0.1 -Y 0 --wait"/>
+
+  <!-- Nodelet manager（相機相關 nodelet 都掛這） -->
+  <node pkg="nodelet" type="nodelet" name="depth_manager" args="manager"/>
+
+  <!-- 深度影像 → 彩色點雲  /camera/depth/points -->
+  <node pkg="nodelet" type="nodelet" name="points_xyzrgb"
+        args="load depth_image_proc/point_cloud_xyzrgb depth_manager">
+    <remap from="image"       to="/camera/depth/image_raw"/>
+    <remap from="camera_info" to="/camera/depth/camera_info"/>
+    <param name="approximate_sync" value="true"/>
+  </node>
+
+  <!-- (可選) 點雲 → 2D LaserScan  /cloud_scan ；若要用就取消註解
+  <node pkg="nodelet" type="nodelet" name="cloud_to_scan"
+        args="load pointcloud_to_laserscan/CloudToScan depth_manager">
+    <remap from="cloud_in"  to="/camera/depth/points"/>
+    <remap from="scan_out"  to="/cloud_scan"/>
+    <param name="output_frame_id" value="base_link"/>
+    <param name="range_min" value="0.3"/>
+    <param name="range_max" value="5.0"/>
+  </node>
+  -->
+
+</launch>

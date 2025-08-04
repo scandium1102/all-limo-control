@@ -1,0 +1,11 @@
+<launch>
+  <!-- Costmap 參數（存放於 config/） -->
+  <rosparam command="load" file="$(find limo_control)/config/global_costmap_params.yaml" ns="global_costmap"/>
+  <rosparam command="load" file="$(find limo_control)/config/local_costmap_params.yaml"  ns="local_costmap"/>
+  <rosparam command="load" file="$(find limo_control)/config/base_local_planner_params.yaml"/>
+
+  <node pkg="move_base" type="move_base" name="move_base" output="screen">
+    <!-- 使用自訂 A* plugin；名稱以你 code 為準 -->
+    <param name="base_global_planner" value="my_planner_namespace/MyGlobalPlanner"/>
+  </node>
+</launch>

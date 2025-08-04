@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>limo_control</name>
+  <version>0.1.0</version>
+  <description>LIMO global-planner plugin &amp; patrol/avoidance scripts</description>
+
+  <!-- 維護者 & 授權 -->
+  <maintainer email="scandial@example.com">scandial</maintainer>
+  <license>BSD</license>
+
+  <!-- ============ 建置工具 ============ -->
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- ============ Build 依賴 (編譯期) ============ -->
+  <build_depend>roscpp</build_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>tf</build_depend>
+  <build_depend>pluginlib</build_depend>
+  <build_depend>nav_core</build_depend>
+  <build_depend>costmap_2d</build_depend>
+  <build_depend>base_local_planner</build_depend>
+  <!-- 若你的 offboard_control 仍用 MAVROS，保留 -->
+  <build_depend>mavros</build_depend>
+  <build_depend>mavros_msgs</build_depend>
+
+  <!-- ============ Export-Build 依賴 (供其他 pkg 連結時) ============ -->
+  <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>rospy</build_export_depend>
+  <build_export_depend>geometry_msgs</build_export_depend>
+  <build_export_depend>nav_msgs</build_export_depend>
+  <build_export_depend>sensor_msgs</build_export_depend>
+  <build_export_depend>tf</build_export_depend>
+  <build_export_depend>pluginlib</build_export_depend>
+  <build_export_depend>nav_core</build_export_depend>
+  <build_export_depend>costmap_2d</build_export_depend>
+  <build_export_depend>base_local_planner</build_export_depend>
+  <build_export_depend>mavros</build_export_depend>
+  <build_export_depend>mavros_msgs</build_export_depend>
+
+  <!-- ============ Run-time 依賴 (執行期) ============ -->
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>tf</exec_depend>
+  <exec_depend>pluginlib</exec_depend>
+  <exec_depend>nav_core</exec_depend>
+  <exec_depend>costmap_2d</exec_depend>
+  <exec_depend>base_local_planner</exec_depend>
+  <exec_depend>mavros</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+
+  <!-- ============ Pluginlib 匯出 (一定要有) ============ -->
+  <export>
+    <pluginlib plugin="${prefix}/global_planner_plugin.xml"/>
+  </export>
+</package>

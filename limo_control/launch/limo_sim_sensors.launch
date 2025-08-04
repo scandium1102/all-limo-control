@@ -1,0 +1,12 @@
+<launch>
+  <!-- Gazebo + LIMO 模型 + 感測器 + RViz（v1 版） -->
+  <include file="$(find limo_gazebo_sim)/launch/limo_ackerman.launch"/>
+
+  <!-- 把 LiDAR PointCloud 轉 LaserScan (依 6/15 日誌) -->
+  <node pkg="nodelet" type="nodelet" name="depth_manager" args="manager"/>
+  <node pkg="nodelet" type="nodelet" name="points_xyzrgb"
+        args="load depth_image_proc/point_cloud_xyzrgb depth_manager">
+    <remap from="image" to="/camera/depth/image_raw"/>
+    <remap from="camera_info" to="/camera/depth/camera_info"/>
+  </node>
+</launch>

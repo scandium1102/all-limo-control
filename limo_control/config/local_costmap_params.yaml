@@ -1,0 +1,23 @@
+local_costmap:
+  global_frame: odom
+  robot_base_frame: base_link
+  update_frequency: 5.0
+  publish_frequency: 2.0
+  transform_tolerance: 0.3
+  rolling_window: true
+  width: 3.0
+  height: 3.0
+  resolution: 0.05
+  static_map: false
+
+  plugins:
+    - {name: obstacle_layer, type: "costmap_2d::ObstacleLayer"}
+    - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+
+  obstacle_layer:
+    max_obstacle_height: 0.6
+    obstacle_range: 2.5
+    raytrace_range: 3.0
+
+  inflation_layer:
+    inflation_radius: 0.5

@@ -1,0 +1,15 @@
+global_costmap:
+  global_frame: map
+  robot_base_frame: base_link
+  static_map: false        # ←一定要 false
+  rolling_window: false    # 通常 false
+  update_frequency: 1.0
+  publish_frequency: 1.0
+  transform_tolerance: 0.5
+
+  plugins:
+    - {name: static_layer,    type: "costmap_2d::StaticLayer"}
+    - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+
+  inflation_layer:
+    inflation_radius: 0.5
