@@ -1,0 +1,9 @@
+<launch>
+  <arg name="config_dir" default="$(find limo_control)/config" />
+
+  <node pkg="limo_control" type="lidar_avoidance_node.py" name="limo_lidar_avoidance" output="screen">
+    <param name="lidar_avoidance.yaml" value="$(arg config_dir)/lidar_avoidance.yaml" />
+    <param name="dynamic_tracker.yaml" value="$(arg config_dir)/dynamic_tracker.yaml" />
+    <param name="frontier_explore.yaml" value="$(arg config_dir)/frontier_explore.yaml" />
+  </node>
+</launch>
