@@ -1,0 +1,7 @@
+<launch>
+    <!-- Load configuration for standalone avoidance node -->
+    <node pkg="limo_control" type="lidar_avoidance_node.py" name="lidar_avoidance" output="screen">
+        <param name="pkg_path" value="$(find limo_control)"/>
+        <param name="rate" value="15.0"/>
+    </node>
+</launch>

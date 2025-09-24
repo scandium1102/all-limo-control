@@ -1,0 +1,7 @@
+min_cluster_size: 30
+inflate_radius: 0.25
+gain_weight: 1.0
+dist_weight: 0.5
+hysteresis_radius: 0.8
+goal_reached_tol: 0.5
+replan_period: 1.0
