@@ -1,0 +1,12 @@
+<launch>
+  <arg name="config_dir" default="$(find limo_control)/config" />
+  <arg name="control_rate" default="20" />
+
+  <node pkg="limo_control"
+        type="lidar_avoidance_node.py"
+        name="lidar_avoidance"
+        output="screen">
+    <param name="config_dir" value="$(arg config_dir)" />
+    <param name="control_rate" value="$(arg control_rate)" />
+  </node>
+</launch>
