@@ -1,0 +1,16 @@
+<launch>
+  <arg name="namespace"   default="camera"/>
+  <arg name="depth_fps"   default="30"/>
+  <arg name="depth_width" default="640"/>
+  <arg name="depth_height" default="480"/>
+
+  <group ns="$(arg namespace)">
+    <include file="$(find orbbec_camera)/launch/dabai.launch">
+      <arg name="enable_depth" value="true"/>
+      <arg name="enable_color" value="false"/>
+      <arg name="depth_width"  value="$(arg depth_width)"/>
+      <arg name="depth_height" value="$(arg depth_height)"/>
+      <arg name="depth_fps"    value="$(arg depth_fps)"/>
+    </include>
+  </group>
+</launch>

@@ -1,0 +1,16 @@
+depth_avoidance:
+  slope_max_deg: 12.0
+  drop_height_min: 0.06
+  drop_gap_cells: 3
+  look_ahead: 1.2
+  roi:
+    x_min: 0.2
+    x_max: 3.0
+    y_halfwidth: 0.6
+    z_min: -0.1
+    z_max: 1.8
+  overhead_clearance: 0.30
+  sync_slop: 0.12
+  depth_timeout: 0.5
+  min_points: 300
+  sample_limit: 60000

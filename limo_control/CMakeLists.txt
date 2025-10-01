@@ -16,12 +16,21 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   sensor_msgs
+  std_msgs
   diagnostic_updater
+  tf2_ros
+  tf2_geometry_msgs
   tf
   pluginlib
   nav_core
   costmap_2d
   base_local_planner
+  message_filters
+  image_transport
+  camera_info_manager
+  depth_image_proc
+  pcl_ros
+  pcl_conversions
 )
 
 ##############################################################################
@@ -30,7 +39,27 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES my_global_planner              # 供 move_base 載入
-  CATKIN_DEPENDS roscpp rospy geometry_msgs nav_msgs tf pluginlib nav_core costmap_2d base_local_planner diagnostic_updater
+  CATKIN_DEPENDS
+    roscpp
+    rospy
+    geometry_msgs
+    nav_msgs
+    sensor_msgs
+    std_msgs
+    diagnostic_updater
+    tf
+    tf2_ros
+    tf2_geometry_msgs
+    pluginlib
+    nav_core
+    costmap_2d
+    base_local_planner
+    message_filters
+    image_transport
+    camera_info_manager
+    depth_image_proc
+    pcl_ros
+    pcl_conversions
 )
 
 ##############################################################################
@@ -70,6 +99,7 @@ catkin_install_python(
   PROGRAMS
     scripts/limo_patrol.py          # ← 巡邏/避障腳本
     scripts/lidar_avoidance_node.py
+    scripts/depth_avoidance_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
