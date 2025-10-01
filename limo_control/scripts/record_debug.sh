@@ -16,5 +16,5 @@ rosbag record -O avoid_debug.bag \
   /camera/depth/points_throttled \
   /cmd_vel \
   /limo_lidar_avoidance/avoidance_debug \
-  /avoidance_debug_3d \
+  /depth_avoidance/avoidance_debug_3d \
   /tf

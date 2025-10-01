@@ -15,40 +15,23 @@
       <param name="queue_size" value="5"/>
     </node>
 
-    <!-- Z ROI: keep 0.2–3.0 m -->
-    <node pkg="nodelet" type="nodelet" name="pass_z"
-          args="load pcl/PassThrough pcl_manager" output="screen">
-      <remap from="~input" to="depth/points_raw"/>
-      <param name="filter_field_name" value="z"/>
-      <param name="filter_limit_min" value="0.2"/>
-      <param name="filter_limit_max" value="3.0"/>
-      <param name="filter_limit_negative" value="false"/>
-    </node>
-
-    <!-- X ROI: keep 0.2–3.0 m ahead -->
-    <node pkg="nodelet" type="nodelet" name="pass_x"
-          args="load pcl/PassThrough pcl_manager" output="screen">
-      <remap from="~input" to="pass_z/output"/>
-      <param name="filter_field_name" value="x"/>
-      <param name="filter_limit_min" value="0.2"/>
-      <param name="filter_limit_max" value="3.0"/>
-      <param name="filter_limit_negative" value="false"/>
-    </node>
-
-    <!-- Y ROI: keep |y| ≤ 0.6 m -->
-    <node pkg="nodelet" type="nodelet" name="pass_y"
-          args="load pcl/PassThrough pcl_manager" output="screen">
-      <remap from="~input" to="pass_x/output"/>
-      <param name="filter_field_name" value="y"/>
-      <param name="filter_limit_min" value="-0.6"/>
-      <param name="filter_limit_max" value="0.6"/>
-      <param name="filter_limit_negative" value="false"/>
+    <!-- One-stage spatial ROI using CropBox -->
+    <node pkg="nodelet" type="nodelet" name="cropbox"
+          args="load pcl/CropBox pcl_manager" output="screen">
+      <remap from="~input"  to="depth/points_raw"/>
+      <remap from="~output" to="depth/points_cropped"/>
+      <param name="min_x" value="0.2"/>
+      <param name="max_x" value="3.0"/>
+      <param name="min_y" value="-0.6"/>
+      <param name="max_y" value="0.6"/>
+      <param name="min_z" value="-0.1"/>
+      <param name="max_z" value="1.8"/>
     </node>
 
     <!-- Downsample using VoxelGrid to cut CPU load downstream -->
     <node pkg="nodelet" type="nodelet" name="voxelgrid"
           args="load pcl/VoxelGrid pcl_manager" output="screen">
-      <remap from="~input"  to="pass_y/output"/>
+      <remap from="~input"  to="depth/points_cropped"/>
       <remap from="~output" to="depth/points_filtered"/>
       <param name="leaf_size" value="$(arg leaf_size)"/>
     </node>

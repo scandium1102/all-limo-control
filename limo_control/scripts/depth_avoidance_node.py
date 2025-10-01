@@ -91,12 +91,16 @@ class DepthAvoidanceNode:
         )
 
         slope_stop = float(self._depth_cfg.get("slope_max_deg", 12.0))
-        slope_resume = float(self._depth_cfg.get("slope_resume_deg", max(0.0, slope_stop - 2.0)))
+        slope_resume = float(
+            self._depth_cfg.get("slope_resume_deg", max(0.0, slope_stop - 2.0))
+        )
         if slope_resume >= slope_stop:
             slope_resume = max(0.0, slope_stop - 2.0)
 
         drop_stop = float(self._depth_cfg.get("drop_height_min", 0.06))
-        drop_resume = float(self._depth_cfg.get("drop_resume_height", max(0.01, drop_stop * 0.6)))
+        drop_resume = float(
+            self._depth_cfg.get("drop_resume_height", max(0.01, drop_stop * 0.6))
+        )
         if drop_resume >= drop_stop:
             drop_resume = max(0.01, drop_stop * 0.6)
 
@@ -129,6 +133,10 @@ class DepthAvoidanceNode:
         self._ransac_thresh = float(self._depth_cfg.get("ransac_thresh", 0.02))
         self._spd_alpha = float(self._depth_cfg.get("spd_alpha", 0.30))
         self._look_ahead = float(self._depth_cfg.get("look_ahead", 1.2))
+        self._lat_gain_ang = float(self._depth_cfg.get("lat_gain_ang", 0.40))
+        self._lat_gain_lin = float(self._depth_cfg.get("lat_gain_lin", 0.20))
+        self._hazard_change_limit = float(self._depth_cfg.get("hazard_change_limit", 3.0))
+        self._hazard_change_vmax = float(self._depth_cfg.get("hazard_change_vmax", 0.25))
 
         self._spd_scale_lp = 1.0
         self._lateral_nudge_lp = 0.0
@@ -153,13 +161,9 @@ class DepthAvoidanceNode:
         self._scan_sub = message_filters.Subscriber(scan_topic, LaserScan)
         self._depth_scan_sub = message_filters.Subscriber(depth_scan_topic, LaserScan)
         self._depth_sub = message_filters.Subscriber(depth_topic, PointCloud2)
-        self._sync = message_filters.ApproximateTimeSynchronizer(
-            [self._scan_sub, self._depth_scan_sub, self._depth_sub],
-            queue_size=10,
-            slop=self._sync_slop,
-        )
-        self._sync.registerCallback(self._sync_cb)
-        self._ats_queue_limit = getattr(self._sync, "queue_size", 10)
+        self._sync: Optional[message_filters.ApproximateTimeSynchronizer]
+        self._sync = None
+        self._rebuild_sync()
 
         self._odom_sub = rospy.Subscriber(odom_topic, Odometry, self._odom_cb, queue_size=10)
 
@@ -239,39 +243,78 @@ class DepthAvoidanceNode:
     def _on_hazard_dyn(self, cfg: DepthHazardConfig, _level: int):
         with self._lock:
             self._depth_cfg["slope_max_deg"] = float(cfg.slope_max_deg)
+            self._depth_cfg["slope_resume_deg"] = float(cfg.slope_resume_deg)
             self._hazard_params.slope_stop_deg = float(cfg.slope_max_deg)
-            resume = float(self._depth_cfg.get("slope_resume_deg", max(0.0, cfg.slope_max_deg - 2.0)))
+            resume = float(cfg.slope_resume_deg)
             if resume >= cfg.slope_max_deg:
                 resume = max(0.0, cfg.slope_max_deg - 2.0)
             self._hazard_params.slope_resume_deg = resume
+            self._depth_cfg["slope_resume_deg"] = resume
+            cfg.slope_resume_deg = resume
 
             self._depth_cfg["drop_height_min"] = float(cfg.drop_height_min)
+            self._depth_cfg["drop_resume_height"] = float(cfg.drop_resume_height)
             self._depth_cfg["drop_gap_cells"] = int(cfg.drop_gap_cells)
             self._hazard_params.drop_stop_m = float(cfg.drop_height_min)
-            drop_resume = float(self._depth_cfg.get("drop_resume_height", max(0.01, cfg.drop_height_min * 0.6)))
+            drop_resume = float(
+                self._depth_cfg.get("drop_resume_height", max(0.01, cfg.drop_height_min * 0.6))
+            )
             if drop_resume >= cfg.drop_height_min:
                 drop_resume = max(0.01, cfg.drop_height_min * 0.6)
             self._hazard_params.drop_resume_m = drop_resume
+            self._depth_cfg["drop_resume_height"] = drop_resume
+            cfg.drop_resume_height = drop_resume
 
             self._depth_cfg["overhead_clearance"] = float(cfg.overhead_clearance)
+            self._depth_cfg["overhead_resume"] = float(cfg.overhead_resume)
             self._hazard_params.overhead_stop_m = float(cfg.overhead_clearance)
             overhead_resume = float(self._depth_cfg.get("overhead_resume", cfg.overhead_clearance + 0.10))
             if overhead_resume <= cfg.overhead_clearance:
                 overhead_resume = cfg.overhead_clearance + 0.10
             self._hazard_params.overhead_resume_m = overhead_resume
+            self._depth_cfg["overhead_resume"] = overhead_resume
+            cfg.overhead_resume = overhead_resume
 
             self._depth_cfg["look_ahead"] = float(cfg.look_ahead)
             self._depth_cfg["sync_slop"] = float(cfg.sync_slop)
             self._depth_cfg["sample_limit"] = int(cfg.sample_limit)
             self._depth_cfg["ransac_thresh"] = float(cfg.ransac_thresh)
             self._depth_cfg["spd_alpha"] = float(cfg.spd_alpha)
+            self._depth_cfg["lat_gain_ang"] = float(cfg.lat_gain_ang)
+            self._depth_cfg["lat_gain_lin"] = float(cfg.lat_gain_lin)
+            self._depth_cfg["hazard_change_limit"] = float(cfg.hazard_change_limit)
+            self._depth_cfg["hazard_change_vmax"] = float(cfg.hazard_change_vmax)
             self._look_ahead = float(cfg.look_ahead)
+            old_slop = float(self._sync_slop)
             self._sync_slop = float(cfg.sync_slop)
             self._sample_limit = int(cfg.sample_limit)
             self._ransac_thresh = float(cfg.ransac_thresh)
             self._spd_alpha = float(cfg.spd_alpha)
-            self._sync.slop = self._sync_slop
+            self._lat_gain_ang = float(cfg.lat_gain_ang)
+            self._lat_gain_lin = float(cfg.lat_gain_lin)
+            self._hazard_change_limit = float(cfg.hazard_change_limit)
+            self._hazard_change_vmax = float(cfg.hazard_change_vmax)
+
+            if abs(self._sync_slop - old_slop) > 1e-9:
+                self._rebuild_sync()
+            else:
+                # ensure queue limit mirrors current synchroniser
+                self._ats_queue_limit = getattr(self._sync, "queue_size", 10) if self._sync else 10
         return cfg
+
+    def _rebuild_sync(self) -> None:
+        if self._sync is not None:
+            try:
+                self._sync.unregisterCallback(self._sync_cb)
+            except Exception:
+                pass
+        self._sync = message_filters.ApproximateTimeSynchronizer(
+            [self._scan_sub, self._depth_scan_sub, self._depth_sub],
+            queue_size=10,
+            slop=float(self._sync_slop),
+        )
+        self._sync.registerCallback(self._sync_cb)
+        self._ats_queue_limit = getattr(self._sync, "queue_size", 10)
 
     # ------------------------------------------------------------------
     def _sync_cb(self, scan: LaserScan, depth_scan: LaserScan, cloud: PointCloud2) -> None:
@@ -365,13 +408,7 @@ class DepthAvoidanceNode:
             k += 1
         self._avoid_params.median_window = k
         if k > 1:
-            pad = k // 2
-            if pad > 0:
-                padv = np.pad(rng, (pad, pad), mode="edge")
-                rng = np.array(
-                    [np.median(padv[i - pad : i + pad + 1]) for i in range(pad, len(padv) - pad)],
-                    dtype=np.float32,
-                )
+            rng = self._median_filter_1d(rng, k)
 
         clean_scan = LaserScan()
         clean_scan.header = msg.header
@@ -394,10 +431,30 @@ class DepthAvoidanceNode:
             return np.full(n_tgt, np.inf, dtype=np.float32)
 
         tgt_angles = angle_min_tgt + np.arange(n_tgt, dtype=np.float32) * angle_inc_tgt
-        src_idx = np.round((tgt_angles - src.angle_min) / src.angle_increment).astype(int)
-        src_idx = np.clip(src_idx, 0, len(src.ranges) - 1)
+        src_pos = (tgt_angles - src.angle_min) / src.angle_increment
+        src_pos = np.clip(src_pos, 0.0, max(0.0, len(src.ranges) - 1.0))
+        i0 = np.floor(src_pos).astype(np.int32)
+        i1 = np.clip(i0 + 1, 0, len(src.ranges) - 1)
+        w = (src_pos - i0).astype(np.float32)
         src_ranges = np.asarray(src.ranges, dtype=np.float32)
-        return src_ranges[src_idx]
+        vals = (1.0 - w) * src_ranges[i0] + w * src_ranges[i1]
+        return vals
+
+    @staticmethod
+    def _median_filter_1d(arr: np.ndarray, k: int) -> np.ndarray:
+        if arr.size == 0:
+            return arr.astype(np.float32)
+        if k <= 1:
+            return arr.astype(np.float32)
+        k = 2 * (k // 2) + 1
+        pad = k // 2
+        if pad <= 0:
+            return arr.astype(np.float32)
+        padded = np.pad(arr, (pad, pad), mode="edge")
+        strides = (padded.strides[0], padded.strides[0])
+        shape = (arr.size, k)
+        windows = np.lib.stride_tricks.as_strided(padded, shape=shape, strides=strides)
+        return np.median(windows, axis=1).astype(np.float32)
 
     @staticmethod
     def _merge_depth_scan(primary: LaserScan, secondary: LaserScan) -> LaserScan:
@@ -855,8 +912,14 @@ class DepthAvoidanceNode:
         adjusted.linear.y = cmd.linear.y
         adjusted.angular.z = cmd.angular.z
 
+        effective_vmax = self._avoid_params.v_max
+        if self._hazard_change_rate > self._hazard_change_limit:
+            effective_vmax = min(effective_vmax, self._hazard_change_vmax)
+
         if self._avoid_params.holonomic:
-            target_y = float(np.clip(-hazard.lateral_bias * 0.2, -0.3, 0.3))
+            target_y = float(
+                np.clip(-hazard.lateral_bias * self._lat_gain_lin, -0.3, 0.3)
+            )
             self._lateral_nudge_lp = 0.7 * self._lateral_nudge_lp + 0.3 * target_y
         else:
             self._lateral_nudge_lp = 0.0
@@ -865,6 +928,9 @@ class DepthAvoidanceNode:
             adjusted.linear.x = 0.0
             adjusted.linear.y = 0.0
         else:
+            adjusted.linear.x = float(
+                np.clip(adjusted.linear.x, -effective_vmax, effective_vmax)
+            )
             adjusted.linear.x *= hazard.speed_scale
             if self._avoid_params.holonomic:
                 lateral_cmd = np.clip(adjusted.linear.y + self._lateral_nudge_lp, -0.3, 0.3)
@@ -873,7 +939,7 @@ class DepthAvoidanceNode:
                 adjusted.linear.y = 0.0
 
         if hazard.lateral_bias and abs(adjusted.angular.z) < self._avoid_params.w_max:
-            steer = 0.4 * np.clip(-hazard.lateral_bias, -1.0, 1.0)
+            steer = self._lat_gain_ang * np.clip(-hazard.lateral_bias, -1.0, 1.0)
             adjusted.angular.z = np.clip(
                 adjusted.angular.z + steer,
                 -self._avoid_params.w_max,
@@ -934,6 +1000,8 @@ class DepthAvoidanceNode:
         stat.add("cloud_proc_ms", self._cloud_proc_ms)
         stat.add("speed_scale_lp", self._spd_scale_lp)
         stat.add("hazard_change_rate_hz", self._hazard_change_rate)
+        stat.add("hazard_change_limit_hz", self._hazard_change_limit)
+        stat.add("hazard_flap_vmax", self._hazard_change_vmax)
         stat.add("ats_queue_limit", self._ats_queue_limit)
         stat.add("ats_queue_len", self._ats_queue_size)
         stat.add("ats_slop", self._sync_slop)
