@@ -1,47 +1,67 @@
 <launch>
-  <arg name="ns" default="/camera"/>
+  <arg name="ns" default="camera"/>
   <arg name="leaf_size" default="0.05"/>
-  <arg name="z_min" default="0.2"/>
-  <arg name="z_max" default="3.0"/>
 
-  <!-- Nodelet manager to host depth processing pipeline -->
-  <node pkg="nodelet" type="nodelet" name="depth_manager" args="manager" ns="$(arg ns)" output="screen"/>
+  <group ns="$(arg ns)">
+    <!-- Nodelet manager to host depth processing pipeline -->
+    <node pkg="nodelet" type="nodelet" name="pcl_manager" args="manager" output="screen"/>
 
-  <!-- Convert depth image to XYZ point cloud -->
-  <node pkg="nodelet" type="nodelet" name="depth_to_cloud"
-        args="load depth_image_proc/point_cloud_xyz depth_manager" ns="$(arg ns)">
-    <remap from="image_rect"  to="depth/image_rect_raw"/>
-    <remap from="camera_info" to="depth/camera_info"/>
-    <remap from="points"      to="depth/points_raw"/>
-    <param name="queue_size" value="5"/>
-  </node>
+    <!-- Convert depth image to XYZ point cloud -->
+    <node pkg="nodelet" type="nodelet" name="depth_to_cloud"
+          args="load depth_image_proc/point_cloud_xyz pcl_manager" output="screen">
+      <remap from="image_rect"  to="depth/image_rect_raw"/>
+      <remap from="camera_info" to="depth/camera_info"/>
+      <remap from="points"      to="depth/points_raw"/>
+      <param name="queue_size" value="5"/>
+    </node>
 
-  <!-- PassThrough on Z axis to constrain ROI before voxelising -->
-  <node pkg="nodelet" type="nodelet" name="pass_through"
-        args="load pcl/PassThrough depth_manager" ns="$(arg ns)" output="screen">
-    <remap from="~input"  to="depth/points_raw"/>
-    <remap from="~output" to="depth/points_roi"/>
-    <param name="filter_field_name" value="z"/>
-    <param name="filter_limit_min" value="$(arg z_min)"/>
-    <param name="filter_limit_max" value="$(arg z_max)"/>
-    <param name="filter_limit_negative" value="false"/>
-  </node>
+    <!-- Z ROI: keep 0.2–3.0 m -->
+    <node pkg="nodelet" type="nodelet" name="pass_z"
+          args="load pcl/PassThrough pcl_manager" output="screen">
+      <remap from="~input" to="depth/points_raw"/>
+      <param name="filter_field_name" value="z"/>
+      <param name="filter_limit_min" value="0.2"/>
+      <param name="filter_limit_max" value="3.0"/>
+      <param name="filter_limit_negative" value="false"/>
+    </node>
 
-  <!-- Downsample using VoxelGrid to cut CPU load downstream -->
-  <node pkg="nodelet" type="nodelet" name="voxelgrid"
-        args="load pcl/VoxelGrid depth_manager" ns="$(arg ns)" output="screen">
-    <remap from="~input"  to="depth/points_roi"/>
-    <remap from="~output" to="depth/points_filtered"/>
-    <param name="leaf_size" value="$(arg leaf_size)"/>
-  </node>
+    <!-- X ROI: keep 0.2–3.0 m ahead -->
+    <node pkg="nodelet" type="nodelet" name="pass_x"
+          args="load pcl/PassThrough pcl_manager" output="screen">
+      <remap from="~input" to="pass_z/output"/>
+      <param name="filter_field_name" value="x"/>
+      <param name="filter_limit_min" value="0.2"/>
+      <param name="filter_limit_max" value="3.0"/>
+      <param name="filter_limit_negative" value="false"/>
+    </node>
 
-  <!-- Optional: produce a virtual LaserScan from depth for redundancy -->
-  <node pkg="depthimage_to_laserscan" type="depthimage_to_laserscan" name="depth_as_scan" ns="$(arg ns)" output="screen">
-    <remap from="image"       to="depth/image_rect_raw"/>
-    <remap from="camera_info" to="depth/camera_info"/>
-    <remap from="scan"        to="depth/scan"/>
-    <param name="scan_height" value="10"/>
-    <param name="range_min"   value="0.45"/>
-    <param name="range_max"   value="8.0"/>
-  </node>
+    <!-- Y ROI: keep |y| ≤ 0.6 m -->
+    <node pkg="nodelet" type="nodelet" name="pass_y"
+          args="load pcl/PassThrough pcl_manager" output="screen">
+      <remap from="~input" to="pass_x/output"/>
+      <param name="filter_field_name" value="y"/>
+      <param name="filter_limit_min" value="-0.6"/>
+      <param name="filter_limit_max" value="0.6"/>
+      <param name="filter_limit_negative" value="false"/>
+    </node>
+
+    <!-- Downsample using VoxelGrid to cut CPU load downstream -->
+    <node pkg="nodelet" type="nodelet" name="voxelgrid"
+          args="load pcl/VoxelGrid pcl_manager" output="screen">
+      <remap from="~input"  to="pass_y/output"/>
+      <remap from="~output" to="depth/points_filtered"/>
+      <param name="leaf_size" value="$(arg leaf_size)"/>
+    </node>
+
+    <!-- Optional: produce a virtual LaserScan from depth for redundancy -->
+    <node pkg="depthimage_to_laserscan" type="depthimage_to_laserscan" name="depth_as_scan" output="screen">
+      <remap from="image"       to="depth/image_rect_raw"/>
+      <remap from="camera_info" to="depth/camera_info"/>
+      <remap from="scan"        to="depth/scan"/>
+      <param name="scan_height" value="10"/>
+      <param name="range_min"   value="0.45"/>
+      <param name="range_max"   value="8.0"/>
+      <param name="output_frame_id" value="base_link"/>
+    </node>
+  </group>
 </launch>

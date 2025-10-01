@@ -7,24 +7,26 @@ import json
 import math
 import os
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import ros_numpy
 import rospy
 import tf2_ros
 from diagnostic_updater import FunctionDiagnosticTask, Updater
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Point, Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs import point_cloud2
 from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import String
 from tf.transformations import quaternion_matrix
+from visualization_msgs.msg import Marker, MarkerArray
 
 import rospkg
 import message_filters
 from dynamic_reconfigure.server import Server as DynServer
-from limo_control.cfg import AvoidanceConfig
+from limo_control.cfg import AvoidanceConfig, DepthHazardConfig
 
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
@@ -60,6 +62,16 @@ class HazardReport:
         }
 
 
+@dataclass
+class HazardParams:
+    slope_stop_deg: float = 12.0
+    slope_resume_deg: float = 10.0
+    drop_stop_m: float = 0.06
+    drop_resume_m: float = 0.03
+    overhead_stop_m: float = 0.30
+    overhead_resume_m: float = 0.40
+
+
 class DepthAvoidanceNode:
     """Fuse LiDAR and depth camera data for 3D-aware collision avoidance."""
 
@@ -73,6 +85,34 @@ class DepthAvoidanceNode:
         self._avoid_params = self._load_params("lidar_avoidance.yaml", AvoidParams, "avoid_params")
         self._track_params = self._load_params("dynamic_tracker.yaml", TrackParams, "tracker_params")
         self._depth_cfg = self._load_params("depth_avoidance.yaml", dict, "depth")
+        self._roi_cfg = self._depth_cfg.get(
+            "roi",
+            {"x_min": 0.2, "x_max": 3.0, "y_halfwidth": 0.6, "z_min": -0.1, "z_max": 1.8},
+        )
+
+        slope_stop = float(self._depth_cfg.get("slope_max_deg", 12.0))
+        slope_resume = float(self._depth_cfg.get("slope_resume_deg", max(0.0, slope_stop - 2.0)))
+        if slope_resume >= slope_stop:
+            slope_resume = max(0.0, slope_stop - 2.0)
+
+        drop_stop = float(self._depth_cfg.get("drop_height_min", 0.06))
+        drop_resume = float(self._depth_cfg.get("drop_resume_height", max(0.01, drop_stop * 0.6)))
+        if drop_resume >= drop_stop:
+            drop_resume = max(0.01, drop_stop * 0.6)
+
+        overhead_stop = float(self._depth_cfg.get("overhead_clearance", 0.30))
+        overhead_resume = float(self._depth_cfg.get("overhead_resume", overhead_stop + 0.10))
+        if overhead_resume <= overhead_stop:
+            overhead_resume = overhead_stop + 0.10
+
+        self._hazard_params = HazardParams(
+            slope_stop_deg=slope_stop,
+            slope_resume_deg=slope_resume,
+            drop_stop_m=drop_stop,
+            drop_resume_m=drop_resume,
+            overhead_stop_m=overhead_stop,
+            overhead_resume_m=overhead_resume,
+        )
 
         self._avoider = LidarAvoider(self._avoid_params)
         self._tracker = DynamicTracker(self._track_params)
@@ -86,10 +126,24 @@ class DepthAvoidanceNode:
         self._sync_slop = float(self._depth_cfg.get("sync_slop", 0.12))
         self._min_points = int(self._depth_cfg.get("min_points", 300))
         self._sample_limit = int(self._depth_cfg.get("sample_limit", 60000))
+        self._ransac_thresh = float(self._depth_cfg.get("ransac_thresh", 0.02))
+        self._spd_alpha = float(self._depth_cfg.get("spd_alpha", 0.30))
+        self._look_ahead = float(self._depth_cfg.get("look_ahead", 1.2))
+
+        self._spd_scale_lp = 1.0
+        self._lateral_nudge_lp = 0.0
+        self._cloud_proc_ms = 0.0
+        self._hazard_change_times: deque = deque(maxlen=64)
+        self._hazard_signature: Optional[Tuple] = None
+        self._hazard_change_rate = 0.0
+        self._ats_queue_size = 0
+        self._rng = np.random.default_rng()
+        self._depth_marker_cache: Optional[MarkerArray] = None
 
         cmd_topic = rospy.get_param("~cmd_vel_topic", "/cmd_vel")
         self._cmd_pub = rospy.Publisher(cmd_topic, Twist, queue_size=1)
         self._debug_pub = rospy.Publisher("~avoidance_debug_3d", String, queue_size=10)
+        self._marker_pub = rospy.Publisher("~hazard_markers", MarkerArray, queue_size=1)
 
         scan_topic = rospy.get_param("~scan_topic", "/scan")
         depth_topic = rospy.get_param("~depth_cloud_topic", "/camera/depth/points_filtered")
@@ -105,6 +159,7 @@ class DepthAvoidanceNode:
             slop=self._sync_slop,
         )
         self._sync.registerCallback(self._sync_cb)
+        self._ats_queue_limit = getattr(self._sync, "queue_size", 10)
 
         self._odom_sub = rospy.Subscriber(odom_topic, Odometry, self._odom_cb, queue_size=10)
 
@@ -123,6 +178,7 @@ class DepthAvoidanceNode:
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
 
         self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg)
+        self._dyn_hazard = DynServer(DepthHazardConfig, self._on_hazard_dyn)
 
         rospy.on_shutdown(lambda: self._cmd_pub.publish(Twist()))
         rospy.loginfo("Depth avoidance node initialised")
@@ -180,6 +236,43 @@ class DepthAvoidanceNode:
             cfg.median_window = k
         return cfg
 
+    def _on_hazard_dyn(self, cfg: DepthHazardConfig, _level: int):
+        with self._lock:
+            self._depth_cfg["slope_max_deg"] = float(cfg.slope_max_deg)
+            self._hazard_params.slope_stop_deg = float(cfg.slope_max_deg)
+            resume = float(self._depth_cfg.get("slope_resume_deg", max(0.0, cfg.slope_max_deg - 2.0)))
+            if resume >= cfg.slope_max_deg:
+                resume = max(0.0, cfg.slope_max_deg - 2.0)
+            self._hazard_params.slope_resume_deg = resume
+
+            self._depth_cfg["drop_height_min"] = float(cfg.drop_height_min)
+            self._depth_cfg["drop_gap_cells"] = int(cfg.drop_gap_cells)
+            self._hazard_params.drop_stop_m = float(cfg.drop_height_min)
+            drop_resume = float(self._depth_cfg.get("drop_resume_height", max(0.01, cfg.drop_height_min * 0.6)))
+            if drop_resume >= cfg.drop_height_min:
+                drop_resume = max(0.01, cfg.drop_height_min * 0.6)
+            self._hazard_params.drop_resume_m = drop_resume
+
+            self._depth_cfg["overhead_clearance"] = float(cfg.overhead_clearance)
+            self._hazard_params.overhead_stop_m = float(cfg.overhead_clearance)
+            overhead_resume = float(self._depth_cfg.get("overhead_resume", cfg.overhead_clearance + 0.10))
+            if overhead_resume <= cfg.overhead_clearance:
+                overhead_resume = cfg.overhead_clearance + 0.10
+            self._hazard_params.overhead_resume_m = overhead_resume
+
+            self._depth_cfg["look_ahead"] = float(cfg.look_ahead)
+            self._depth_cfg["sync_slop"] = float(cfg.sync_slop)
+            self._depth_cfg["sample_limit"] = int(cfg.sample_limit)
+            self._depth_cfg["ransac_thresh"] = float(cfg.ransac_thresh)
+            self._depth_cfg["spd_alpha"] = float(cfg.spd_alpha)
+            self._look_ahead = float(cfg.look_ahead)
+            self._sync_slop = float(cfg.sync_slop)
+            self._sample_limit = int(cfg.sample_limit)
+            self._ransac_thresh = float(cfg.ransac_thresh)
+            self._spd_alpha = float(cfg.spd_alpha)
+            self._sync.slop = self._sync_slop
+        return cfg
+
     # ------------------------------------------------------------------
     def _sync_cb(self, scan: LaserScan, depth_scan: LaserScan, cloud: PointCloud2) -> None:
         clean_scan = self._sanitize_scan(scan)
@@ -196,6 +289,11 @@ class DepthAvoidanceNode:
             hazard = self._process_depth_cloud(cloud)
             self._hazard_state = hazard
             self._last_depth_time = now
+            try:
+                queues = getattr(self._sync, "queues", [])
+                self._ats_queue_size = int(sum(len(q) for q in queues))
+            except AttributeError:
+                self._ats_queue_size = self._ats_queue_limit
 
     def _odom_cb(self, msg: Odometry) -> None:
         with self._lock:
@@ -217,6 +315,8 @@ class DepthAvoidanceNode:
             if self._last_depth_time is None or (now - self._last_depth_time) > rospy.Duration(self._depth_timeout):
                 rospy.logwarn_throttle(1.0, "Depth data timeout; relying on LiDAR only")
                 self._hazard_state = HazardReport(notes=["depth_timeout"])  # degrade gracefully
+                self._spd_scale_lp = 1.0
+                self._update_hazard_change_rate(self._hazard_state)
 
             tracks = self._tracker.step(now.to_sec())
             self._last_track_count = len(tracks)
@@ -250,6 +350,7 @@ class DepthAvoidanceNode:
                 self._debug_pub.publish(json.dumps(payload))
 
             self._diag.update()
+            self._publish_markers(cmd)
 
     # ------------------------------------------------------------------
     def _sanitize_scan(self, msg: LaserScan) -> LaserScan:
@@ -286,31 +387,74 @@ class DepthAvoidanceNode:
         return clean_scan
 
     @staticmethod
+    def _resample_scan_to_grid(
+        src: LaserScan, angle_min_tgt: float, angle_inc_tgt: float, n_tgt: int
+    ) -> np.ndarray:
+        if not src.ranges or angle_inc_tgt <= 0.0 or src.angle_increment <= 0.0:
+            return np.full(n_tgt, np.inf, dtype=np.float32)
+
+        tgt_angles = angle_min_tgt + np.arange(n_tgt, dtype=np.float32) * angle_inc_tgt
+        src_idx = np.round((tgt_angles - src.angle_min) / src.angle_increment).astype(int)
+        src_idx = np.clip(src_idx, 0, len(src.ranges) - 1)
+        src_ranges = np.asarray(src.ranges, dtype=np.float32)
+        return src_ranges[src_idx]
+
+    @staticmethod
     def _merge_depth_scan(primary: LaserScan, secondary: LaserScan) -> LaserScan:
         if not secondary.ranges:
             return primary
 
-        if len(primary.ranges) != len(secondary.ranges):
-            return primary
-
-        angle_tol = 1e-4
-        if (
-            abs(primary.angle_min - secondary.angle_min) > angle_tol
-            or abs(primary.angle_increment - secondary.angle_increment) > angle_tol
-        ):
-            return primary
-
         pri = np.asarray(primary.ranges, dtype=np.float32)
-        sec = np.asarray(secondary.ranges, dtype=np.float32)
-        merged = np.minimum(pri, sec)
+        if pri.size == 0:
+            return primary
+
+        resampled = DepthAvoidanceNode._resample_scan_to_grid(
+            secondary,
+            primary.angle_min,
+            primary.angle_increment,
+            pri.size,
+        )
+
+        resampled = np.clip(resampled, primary.range_min, primary.range_max)
+        merged = np.minimum(pri, resampled)
         primary.ranges = merged.tolist()
         return primary
+
+    @staticmethod
+    def _compute_gate(value: float, resume: float, stop: float, inverse: bool = False) -> float:
+        if inverse:
+            if value <= stop:
+                return 0.0
+            if value >= resume:
+                return 1.0
+            return float(np.clip((value - stop) / max(1e-6, resume - stop), 0.0, 1.0))
+
+        if value >= stop:
+            return 0.0
+        if value <= resume:
+            return 1.0
+        return float(np.clip((stop - value) / max(1e-6, stop - resume), 0.0, 1.0))
+
+    def _apply_speed_lpf(self, hazard: HazardReport) -> None:
+        hazard.speed_scale = float(np.clip(hazard.speed_scale, 0.0, 1.0))
+        self._spd_scale_lp = (1.0 - self._spd_alpha) * self._spd_scale_lp + self._spd_alpha * hazard.speed_scale
+        hazard.speed_scale = float(np.clip(self._spd_scale_lp, 0.0, 1.0))
 
     # ------------------------------------------------------------------
     def _process_depth_cloud(self, cloud: PointCloud2) -> HazardReport:
         hazard = HazardReport()
+        proc_start = rospy.get_time()
+        stamp = cloud.header.stamp if cloud.header.stamp != rospy.Time() else rospy.Time.now()
+        roi_points = np.empty((0, 3), dtype=np.float32)
+        drop_points = np.empty((0, 3), dtype=np.float32)
+        over_points = np.empty((0, 3), dtype=np.float32)
+
         if cloud.width * cloud.height == 0:
             hazard.notes.append("empty_cloud")
+            self._apply_speed_lpf(hazard)
+            self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+            self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+            self._update_hazard_change_rate(hazard)
             return hazard
 
         try:
@@ -331,106 +475,161 @@ class DepthAvoidanceNode:
             except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as exc:
                 rospy.logwarn_throttle(1.0, f"Depth TF unavailable: {exc}")
                 hazard.notes.append("no_tf")
+                self._apply_speed_lpf(hazard)
+                self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+                self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+                self._update_hazard_change_rate(hazard)
                 return hazard
+
+        arr = ros_numpy.point_cloud2.pointcloud2_to_array(cloud)
+        if arr.size == 0:
+            hazard.notes.append("no_points")
+            self._apply_speed_lpf(hazard)
+            self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+            self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+            self._update_hazard_change_rate(hazard)
+            return hazard
+
+        xyz = ros_numpy.point_cloud2.get_xyz_points(arr, remove_nans=True)
+        if xyz.size == 0:
+            hazard.notes.append("no_points")
+            self._apply_speed_lpf(hazard)
+            self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+            self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+            self._update_hazard_change_rate(hazard)
+            return hazard
+
+        if self._sample_limit > 0 and xyz.shape[0] > self._sample_limit:
+            idx = self._rng.choice(xyz.shape[0], self._sample_limit, replace=False)
+            xyz = xyz[idx]
 
         translation = transform.transform.translation
         rotation = transform.transform.rotation
-        rot_m = quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])[:3, :3]
+        rot_m = quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])[:3, :3].astype(np.float32)
         trans_v = np.array([translation.x, translation.y, translation.z], dtype=np.float32)
+        xyz = (rot_m @ xyz.T).T + trans_v
 
-        points_list: List[Tuple[float, float, float]] = []
-        for idx, pt in enumerate(point_cloud2.read_points(cloud, field_names=("x", "y", "z"), skip_nans=True)):
-            if self._sample_limit > 0 and idx >= self._sample_limit:
-                break
-            points_list.append((float(pt[0]), float(pt[1]), float(pt[2])))
+        hazard.sample_count = int(xyz.shape[0])
 
-        if not points_list:
-            hazard.notes.append("no_points")
-            return hazard
-        points = np.asarray(points_list, dtype=np.float32)
-
-        points = (rot_m @ points.T).T + trans_v
-        hazard.sample_count = int(points.shape[0])
-
-        roi = self._depth_cfg.get("roi", {})
-        x_min = float(roi.get("x_min", 0.2))
-        x_max = float(roi.get("x_max", 3.0))
-        y_half = float(roi.get("y_halfwidth", 0.6))
-        z_min = float(roi.get("z_min", -0.1))
-        z_max = float(roi.get("z_max", 1.8))
+        x_min = float(self._roi_cfg.get("x_min", 0.2))
+        x_max = float(self._roi_cfg.get("x_max", 3.0))
+        y_half = float(self._roi_cfg.get("y_halfwidth", 0.6))
+        z_min = float(self._roi_cfg.get("z_min", -0.1))
+        z_max = float(self._roi_cfg.get("z_max", 1.8))
 
         mask = (
-            (points[:, 0] >= x_min)
-            & (points[:, 0] <= x_max)
-            & (np.abs(points[:, 1]) <= y_half)
-            & (points[:, 2] >= z_min)
-            & (points[:, 2] <= z_max)
+            (xyz[:, 0] >= x_min)
+            & (xyz[:, 0] <= x_max)
+            & (np.abs(xyz[:, 1]) <= y_half)
+            & (xyz[:, 2] >= z_min)
+            & (xyz[:, 2] <= z_max)
         )
-        roi_points = points[mask]
+        roi_points = xyz[mask]
         if roi_points.shape[0] < self._min_points:
             hazard.notes.append("sparse_cloud")
+            self._apply_speed_lpf(hazard)
+            self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+            self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+            self._update_hazard_change_rate(hazard)
             return hazard
 
         plane_normal, plane_offset, inliers = self._estimate_ground_plane(roi_points)
-        if plane_normal is None or len(inliers) < self._min_points // 4:
+        if plane_normal is None or inliers.size < max(3, self._min_points // 4):
             hazard.notes.append("ground_unstable")
+            self._apply_speed_lpf(hazard)
+            self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+            self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+            self._update_hazard_change_rate(hazard)
             return hazard
 
         up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
         align = float(np.clip(np.dot(plane_normal, up), -1.0, 1.0))
         slope_angle = math.degrees(math.acos(align))
         hazard.slope_angle_deg = slope_angle
-        slope_limit = float(self._depth_cfg.get("slope_max_deg", 12.0))
-        if slope_angle > slope_limit:
+
+        slope_gate = self._compute_gate(
+            slope_angle,
+            self._hazard_params.slope_resume_deg,
+            self._hazard_params.slope_stop_deg,
+        )
+        if slope_gate <= 0.0:
             hazard.slope_blocked = True
-            hazard.speed_scale = 0.0
             hazard.notes.append("slope_blocked")
-        elif slope_angle > 0.7 * slope_limit:
-            hazard.speed_scale = min(hazard.speed_scale, 0.3)
+        elif slope_gate < 1.0:
             hazard.notes.append("slope_slow")
+
+        hazard.speed_scale = min(hazard.speed_scale, slope_gate)
 
         ground_points = roi_points[inliers]
         ground_z = float(np.mean(ground_points[:, 2]))
 
-        drop_thresh = float(self._depth_cfg.get("drop_height_min", 0.06))
         drop_gap_cells = int(self._depth_cfg.get("drop_gap_cells", 3))
+        drop_thresh = self._hazard_params.drop_stop_m
         below_mask = roi_points[:, 2] < (ground_z - drop_thresh)
-        if np.count_nonzero(below_mask) >= drop_gap_cells:
-            hazard.drop_detected = True
-            hazard.speed_scale = 0.0
-            hazard.drop_depth = float((ground_z - np.min(roi_points[below_mask, 2])))
-            hazard.lateral_bias += float(np.clip(np.mean(roi_points[below_mask, 1]), -1.0, 1.0))
-            hazard.notes.append("drop")
+        drop_points = roi_points[below_mask]
+        drop_depth = float(ground_z - np.min(drop_points[:, 2])) if drop_points.size else 0.0
+        if drop_points.shape[0] >= max(1, drop_gap_cells):
+            drop_gate = self._compute_gate(
+                drop_depth,
+                self._hazard_params.drop_resume_m,
+                self._hazard_params.drop_stop_m,
+            )
+            hazard.drop_detected = drop_gate < 1.0
+            hazard.drop_depth = drop_depth
+            if drop_points.size:
+                hazard.lateral_bias += float(np.clip(np.mean(drop_points[:, 1]), -1.0, 1.0))
+            if drop_gate <= 0.0:
+                hazard.notes.append("drop")
+            else:
+                hazard.notes.append("drop_warn")
+            hazard.speed_scale = min(hazard.speed_scale, drop_gate)
 
-        look_ahead = float(self._depth_cfg.get("look_ahead", 1.2))
-        clearance = float(self._depth_cfg.get("overhead_clearance", 0.3))
-        overhead_mask = (
+        overhead_region = (
             (roi_points[:, 0] >= x_min)
-            & (roi_points[:, 0] <= look_ahead)
+            & (roi_points[:, 0] <= self._look_ahead)
             & (roi_points[:, 2] > ground_z + 0.05)
-            & (roi_points[:, 2] < ground_z + clearance)
+            & (roi_points[:, 2] < ground_z + self._hazard_params.overhead_resume_m)
         )
-        if np.count_nonzero(overhead_mask) >= max(1, drop_gap_cells):
+        over_points = roi_points[overhead_region]
+        clearance = (
+            float(np.min(over_points[:, 2] - ground_z)) if over_points.size else self._hazard_params.overhead_resume_m
+        )
+        over_gate = self._compute_gate(
+            clearance,
+            self._hazard_params.overhead_resume_m,
+            self._hazard_params.overhead_stop_m,
+            inverse=True,
+        )
+        if over_points.size and clearance <= self._hazard_params.overhead_resume_m:
+            hazard.lateral_bias += float(np.clip(np.mean(over_points[:, 1]), -1.0, 1.0))
+        if clearance <= self._hazard_params.overhead_stop_m:
             hazard.overhead_detected = True
-            hazard.speed_scale = min(hazard.speed_scale, 0.2)
-            hazard.overhead_clearance = float(np.min(roi_points[overhead_mask, 2] - ground_z))
-            hazard.lateral_bias += float(np.clip(np.mean(roi_points[overhead_mask, 1]), -1.0, 1.0))
             hazard.notes.append("overhang")
+        hazard.overhead_clearance = clearance
+        hazard.speed_scale = min(hazard.speed_scale, over_gate)
 
+        self._apply_speed_lpf(hazard)
+
+        self._update_marker_cache(stamp, roi_points, plane_normal, ground_z, drop_points, over_points)
+        self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+        self._update_hazard_change_rate(hazard)
         return hazard
 
     # ------------------------------------------------------------------
     def _estimate_ground_plane(
-        self, points: np.ndarray, iterations: int = 40, threshold: float = 0.02
+        self, points: np.ndarray, iterations: int = 40
     ) -> Tuple[Optional[np.ndarray], Optional[float], np.ndarray]:
+        if points.shape[0] < 3:
+            return None, None, np.array([], dtype=int)
+
         best_inliers: np.ndarray = np.array([], dtype=int)
         best_normal: Optional[np.ndarray] = None
         best_offset: Optional[float] = None
-        if points.shape[0] < 3:
-            return None, None, best_inliers
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        threshold = float(self._ransac_thresh)
 
         for _ in range(iterations):
-            idx = np.random.choice(points.shape[0], 3, replace=False)
+            idx = self._rng.choice(points.shape[0], 3, replace=False)
             p0, p1, p2 = points[idx]
             v1 = p1 - p0
             v2 = p2 - p0
@@ -441,6 +640,9 @@ class DepthAvoidanceNode:
             normal = normal / norm
             if normal[2] < 0.0:
                 normal = -normal
+            align = np.dot(normal, up)
+            if align < 0.5:
+                continue
             d = -np.dot(normal, p0)
             distances = np.abs(points @ normal + d)
             inliers = np.where(distances < threshold)[0]
@@ -448,7 +650,203 @@ class DepthAvoidanceNode:
                 best_inliers = inliers
                 best_normal = normal
                 best_offset = d
-        return best_normal, best_offset, best_inliers
+
+        if best_inliers.size == 0 or best_normal is None:
+            return None, None, np.array([], dtype=int)
+
+        inlier_pts = points[best_inliers]
+        centroid = np.mean(inlier_pts, axis=0)
+        demeaned = inlier_pts - centroid
+        try:
+            _, _, vh = np.linalg.svd(demeaned, full_matrices=False)
+        except np.linalg.LinAlgError:
+            return best_normal, best_offset, best_inliers
+        normal = vh[2, :]
+        if normal[2] < 0.0:
+            normal = -normal
+        normal = normal / np.linalg.norm(normal)
+        offset = -np.dot(normal, centroid)
+        distances = np.abs(points @ normal + offset)
+        refined_inliers = np.where(distances < threshold)[0]
+        return normal, float(offset), refined_inliers
+
+    def _update_marker_cache(
+        self,
+        stamp: rospy.Time,
+        roi_points: np.ndarray,
+        plane_normal: Optional[np.ndarray],
+        ground_z: float,
+        drop_points: np.ndarray,
+        over_points: np.ndarray,
+    ) -> None:
+        markers = MarkerArray()
+
+        roi_marker = Marker()
+        roi_marker.header.frame_id = self._base_frame
+        roi_marker.header.stamp = stamp
+        roi_marker.ns = "depth_roi"
+        roi_marker.id = 0
+        roi_marker.type = Marker.LINE_LIST
+        roi_marker.action = Marker.ADD
+        roi_marker.scale.x = 0.01
+        roi_marker.color.r = 0.2
+        roi_marker.color.g = 0.8
+        roi_marker.color.b = 1.0
+        roi_marker.color.a = 0.4
+
+        x_min = float(self._roi_cfg.get("x_min", 0.2))
+        x_max = float(self._roi_cfg.get("x_max", 3.0))
+        y_half = float(self._roi_cfg.get("y_halfwidth", 0.6))
+        z_min = float(self._roi_cfg.get("z_min", -0.1))
+        z_max = float(self._roi_cfg.get("z_max", 1.8))
+
+        corners = [
+            (x_min, -y_half, z_min),
+            (x_min, y_half, z_min),
+            (x_max, -y_half, z_min),
+            (x_max, y_half, z_min),
+            (x_min, -y_half, z_max),
+            (x_min, y_half, z_max),
+            (x_max, -y_half, z_max),
+            (x_max, y_half, z_max),
+        ]
+        edges = [
+            (0, 1), (1, 3), (3, 2), (2, 0),
+            (4, 5), (5, 7), (7, 6), (6, 4),
+            (0, 4), (1, 5), (2, 6), (3, 7),
+        ]
+        for i, j in edges:
+            roi_marker.points.append(Point(*corners[i]))
+            roi_marker.points.append(Point(*corners[j]))
+        markers.markers.append(roi_marker)
+
+        if plane_normal is not None:
+            plane_marker = Marker()
+            plane_marker.header.frame_id = self._base_frame
+            plane_marker.header.stamp = stamp
+            plane_marker.ns = "depth_roi"
+            plane_marker.id = 1
+            plane_marker.type = Marker.ARROW
+            plane_marker.action = Marker.ADD
+            plane_marker.scale.x = 0.04
+            plane_marker.scale.y = 0.08
+            plane_marker.scale.z = 0.08
+            plane_marker.color.r = 0.1
+            plane_marker.color.g = 1.0
+            plane_marker.color.b = 0.1
+            plane_marker.color.a = 0.8
+            start = Point(0.0, 0.0, ground_z)
+            end = Point(
+                plane_normal[0] * 0.5,
+                plane_normal[1] * 0.5,
+                ground_z + plane_normal[2] * 0.5,
+            )
+            plane_marker.points = [start, end]
+            markers.markers.append(plane_marker)
+
+        if drop_points.size:
+            drop_marker = Marker()
+            drop_marker.header.frame_id = self._base_frame
+            drop_marker.header.stamp = stamp
+            drop_marker.ns = "depth_roi"
+            drop_marker.id = 2
+            drop_marker.type = Marker.POINTS
+            drop_marker.action = Marker.ADD
+            drop_marker.scale.x = 0.05
+            drop_marker.scale.y = 0.05
+            drop_marker.color.r = 1.0
+            drop_marker.color.g = 0.1
+            drop_marker.color.b = 0.1
+            drop_marker.color.a = 0.9
+            stride = max(1, drop_points.shape[0] // 100)
+            for pt in drop_points[::stride]:
+                drop_marker.points.append(Point(pt[0], pt[1], pt[2]))
+            markers.markers.append(drop_marker)
+
+        if over_points.size:
+            over_marker = Marker()
+            over_marker.header.frame_id = self._base_frame
+            over_marker.header.stamp = stamp
+            over_marker.ns = "depth_roi"
+            over_marker.id = 3
+            over_marker.type = Marker.POINTS
+            over_marker.action = Marker.ADD
+            over_marker.scale.x = 0.05
+            over_marker.scale.y = 0.05
+            over_marker.color.r = 1.0
+            over_marker.color.g = 1.0
+            over_marker.color.b = 0.1
+            over_marker.color.a = 0.9
+            stride = max(1, over_points.shape[0] // 100)
+            for pt in over_points[::stride]:
+                over_marker.points.append(Point(pt[0], pt[1], pt[2]))
+            markers.markers.append(over_marker)
+
+        self._depth_marker_cache = markers
+
+    def _publish_markers(self, cmd: Twist) -> None:
+        if self._marker_pub.get_num_connections() == 0:
+            return
+
+        markers = MarkerArray()
+        if self._depth_marker_cache is not None:
+            markers.markers.extend(self._depth_marker_cache.markers)
+
+        heading = Marker()
+        heading.header.frame_id = self._base_frame
+        heading.header.stamp = rospy.Time.now()
+        heading.ns = "depth_heading"
+        heading.id = 100
+        heading.type = Marker.ARROW
+        heading.action = Marker.ADD
+        heading.scale.x = 0.05
+        heading.scale.y = 0.1
+        heading.scale.z = 0.1
+        heading.color.r = 0.0
+        heading.color.g = 1.0
+        heading.color.b = 0.0
+        heading.color.a = 0.9
+        heading.points = [Point(0.0, 0.0, 0.0), Point(cmd.linear.x, cmd.linear.y, 0.0)]
+        markers.markers.append(heading)
+
+        bias = Marker()
+        bias.header = heading.header
+        bias.ns = "depth_heading"
+        bias.id = 101
+        bias.type = Marker.ARROW
+        bias.action = Marker.ADD
+        bias.scale.x = 0.05
+        bias.scale.y = 0.1
+        bias.scale.z = 0.1
+        bias.color.r = 1.0
+        bias.color.g = 0.0
+        bias.color.b = 1.0
+        bias.color.a = 0.9
+        bias.points = [Point(0.0, 0.0, 0.0), Point(0.0, self._hazard_state.lateral_bias, 0.0)]
+        markers.markers.append(bias)
+
+        self._marker_pub.publish(markers)
+
+    def _update_hazard_change_rate(self, hazard: HazardReport) -> None:
+        signature = (
+            round(hazard.speed_scale, 2),
+            hazard.slope_blocked,
+            hazard.drop_detected,
+            hazard.overhead_detected,
+            tuple(sorted(hazard.notes)),
+        )
+        now = rospy.get_time()
+        if self._hazard_signature != signature:
+            self._hazard_signature = signature
+            self._hazard_change_times.append(now)
+
+        window = 5.0
+        while self._hazard_change_times and now - self._hazard_change_times[0] > window:
+            self._hazard_change_times.popleft()
+
+        self._hazard_change_rate = (
+            len(self._hazard_change_times) / window if window > 0.0 else 0.0
+        )
 
     # ------------------------------------------------------------------
     def _apply_hazards(self, cmd: Twist, hazard: HazardReport) -> Twist:
@@ -457,13 +855,20 @@ class DepthAvoidanceNode:
         adjusted.linear.y = cmd.linear.y
         adjusted.angular.z = cmd.angular.z
 
+        if self._avoid_params.holonomic:
+            target_y = float(np.clip(-hazard.lateral_bias * 0.2, -0.3, 0.3))
+            self._lateral_nudge_lp = 0.7 * self._lateral_nudge_lp + 0.3 * target_y
+        else:
+            self._lateral_nudge_lp = 0.0
+
         if hazard.speed_scale <= 0.0:
             adjusted.linear.x = 0.0
-            adjusted.linear.y = 0.0 if not self._avoid_params.holonomic else adjusted.linear.y * 0.0
+            adjusted.linear.y = 0.0
         else:
             adjusted.linear.x *= hazard.speed_scale
             if self._avoid_params.holonomic:
-                adjusted.linear.y *= hazard.speed_scale
+                lateral_cmd = np.clip(adjusted.linear.y + self._lateral_nudge_lp, -0.3, 0.3)
+                adjusted.linear.y = lateral_cmd * hazard.speed_scale
             else:
                 adjusted.linear.y = 0.0
 
@@ -525,7 +930,15 @@ class DepthAvoidanceNode:
         stat.add("hazard_speed_scale", self._hazard_state.speed_scale)
         stat.add("hazard_notes", ",".join(self._hazard_state.notes))
         stat.add("tracked_objects", self._last_track_count)
+        stat.add("hazard_sample_count", self._hazard_state.sample_count)
+        stat.add("cloud_proc_ms", self._cloud_proc_ms)
+        stat.add("speed_scale_lp", self._spd_scale_lp)
+        stat.add("hazard_change_rate_hz", self._hazard_change_rate)
+        stat.add("ats_queue_limit", self._ats_queue_limit)
+        stat.add("ats_queue_len", self._ats_queue_size)
+        stat.add("ats_slop", self._sync_slop)
         stat.add("cmd_linear_x", self._last_cmd.linear.x)
+        stat.add("cmd_linear_y", self._last_cmd.linear.y)
         stat.add("cmd_angular_z", self._last_cmd.angular.z)
         return stat
 

@@ -36,6 +36,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 generate_dynamic_reconfigure_options(
   cfg/Avoidance.cfg
+  cfg/DepthHazard.cfg
 )
 
 ##############################################################################
@@ -66,6 +67,7 @@ catkin_package(
     depth_image_proc
     pcl_ros
     pcl_conversions
+    ros_numpy
 )
 
 ##############################################################################
@@ -106,6 +108,11 @@ catkin_install_python(
     scripts/limo_patrol.py          # ← 巡邏/避障腳本
     scripts/lidar_avoidance_node.py
     scripts/depth_avoidance_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(PROGRAMS
+  scripts/record_debug.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
