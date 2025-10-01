@@ -8,6 +8,7 @@
   <arg name="odom_frame"    default="odom"/>
   <arg name="map_frame"     default="map"/>
   <arg name="scan_timeout"  default="0.5"/>
+  <arg name="tf_timeout"   default="0.2"/>
 
   <!-- 舊法（保持相容）：把 YAML 路徑傳給節點，由節點自己讀檔 -->
   <param name="lidar_avoidance.yaml"  value="$(arg config_dir)/lidar_avoidance.yaml"/>
@@ -28,5 +29,6 @@
     <param name="odom_frame"     value="$(arg odom_frame)"/>
     <param name="map_frame"      value="$(arg map_frame)"/>
     <param name="scan_timeout"   value="$(arg scan_timeout)"/>
+    <param name="tf_timeout"     value="$(arg tf_timeout)"/>
   </node>
 </launch>

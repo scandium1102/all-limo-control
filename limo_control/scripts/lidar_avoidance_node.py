@@ -6,17 +6,19 @@ from __future__ import annotations
 import math
 import os
 import threading
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import rospy
 import tf2_ros
 import yaml
+import numpy as np
 from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 import rospkg
+from diagnostic_updater import FunctionDiagnosticTask, Updater
 
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, FrontierParams
@@ -65,17 +67,20 @@ class LidarAvoidanceNode:
             self._map_sub = None
 
         self._last_goal: Optional[FrontierGoal] = None
-        self._last_scan_time: Optional[float] = None
+        self._last_scan_time: Optional[rospy.Time] = None
+        self._last_scan: Optional[Tuple[LaserScan, np.ndarray]] = None
+        self._map: Optional[OccupancyGrid] = None
+
+        self._diag = Updater()
+        self._diag.setHardwareID("limo_lidar_avoidance")
+        self._diag.add(FunctionDiagnosticTask("inputs", self._diag_inputs))
+
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
+
+        self._self_check()
 
     # ------------------------------------------------------------------
     def _load_params(self, filename: str, cls, param_ns: str):
-        tree = rospy.get_param(f"~{param_ns}", None)
-        if isinstance(tree, dict) and tree:
-            if param_ns in tree and isinstance(tree[param_ns], dict):
-                tree = tree[param_ns]
-            return cls(**tree)
-
         pkg_path = rospkg.RosPack().get_path("limo_control")
         default_path = os.path.join(pkg_path, "config", filename)
         param_path = rospy.get_param(f"~{filename}", default_path)
@@ -87,16 +92,53 @@ class LidarAvoidanceNode:
             rospy.logfatal(f"Failed to load parameters from {param_path}: {exc}")
             raise
 
-        if isinstance(data, dict) and param_ns in data and isinstance(data[param_ns], dict):
-            data = data[param_ns]
+        if isinstance(data, dict):
+            if param_ns in data and isinstance(data[param_ns], dict):
+                base = dict(data[param_ns])
+            else:
+                base = dict(data)
+        else:
+            base = {}
 
-        return cls(**data)
+        tree = rospy.get_param(f"~{param_ns}", None)
+        if isinstance(tree, dict) and tree:
+            override = tree[param_ns] if param_ns in tree and isinstance(tree[param_ns], dict) else tree
+            base.update(override)
+
+        return cls(**base)
 
     def _scan_cb(self, msg: LaserScan) -> None:
+        rng = np.asarray(msg.ranges, dtype=np.float32)
+        rng[~np.isfinite(rng)] = msg.range_max
+        rng = np.clip(rng, msg.range_min, msg.range_max)
+
+        k = int(rospy.get_param("~avoid_params/median_window", 3))
+        if k > 1:
+            pad = k // 2
+            if pad > 0:
+                padv = np.pad(rng, (pad, pad), mode="edge")
+                rng = np.array(
+                    [np.median(padv[i - pad : i + pad + 1]) for i in range(pad, len(padv) - pad)],
+                    dtype=np.float32,
+                )
+
+        clean_scan = LaserScan()
+        clean_scan.header = msg.header
+        clean_scan.angle_min = msg.angle_min
+        clean_scan.angle_max = msg.angle_max
+        clean_scan.angle_increment = msg.angle_increment
+        clean_scan.time_increment = msg.time_increment
+        clean_scan.scan_time = msg.scan_time
+        clean_scan.range_min = msg.range_min
+        clean_scan.range_max = msg.range_max
+        clean_scan.ranges = rng.tolist()
+        clean_scan.intensities = list(msg.intensities)
+
         with self._lock:
-            self._tracker.update_scan(msg)
-            self._avoider.update_scan(msg)
-            self._last_scan_time = rospy.Time.now().to_sec()
+            self._tracker.update_scan(clean_scan)
+            self._avoider.update_scan(clean_scan)
+            self._last_scan_time = rospy.Time.now()
+            self._last_scan = (clean_scan, rng)
 
     def _odom_cb(self, msg: Odometry) -> None:
         with self._lock:
@@ -107,6 +149,7 @@ class LidarAvoidanceNode:
         with self._lock:
             self._explorer.update_map(msg)
             self._map_received = True
+            self._map = msg
 
     def _update_robot_pose(self) -> None:
         if not self._map_enabled or not self._map_received:
@@ -128,16 +171,17 @@ class LidarAvoidanceNode:
 
     def _timer_cb(self, _event) -> None:
         with self._lock:
-            now = rospy.Time.now().to_sec()
+            now = rospy.Time.now()
 
-            if self._last_scan_time is None or (now - self._last_scan_time) > self._scan_timeout:
+            if self._last_scan_time is None or (now - self._last_scan_time) > rospy.Duration(self._scan_timeout):
                 rospy.logwarn_throttle(1.0, "LiDAR scan timeout; stopping robot")
                 self._avoider.update_nav_hint(None)
                 self._cmd_pub.publish(Twist())
                 self._last_goal = None
+                self._diag.update()
                 return
 
-            tracked = self._tracker.step(now)
+            tracked = self._tracker.step(now.to_sec())
             barriers = self._convert_barriers(tracked)
             self._avoider.ingest_dynamic_barriers(barriers)
 
@@ -159,6 +203,8 @@ class LidarAvoidanceNode:
             self._cmd_pub.publish(cmd)
             if self._avoid_params.publish_debug:
                 self._debug_pub.publish(self._avoider.to_json(debug))
+
+            self._diag.update()
 
     def _convert_barriers(self, tracks) -> List[dict]:
         barriers: List[dict] = []
@@ -192,6 +238,47 @@ class LidarAvoidanceNode:
         t0 = +2.0 * (w * z + x * y)
         t1 = +1.0 - 2.0 * (y * y + z * z)
         return math.atan2(t0, t1)
+
+    def _diag_inputs(self, stat):
+        if self._last_scan_time is None:
+            age = float("inf")
+        else:
+            age = (rospy.Time.now() - self._last_scan_time).to_sec()
+        if age < self._scan_timeout:
+            stat.summary(0, "OK")
+        else:
+            stat.summary(1, "No recent scan")
+        stat.add("scan_age_sec", age)
+        stat.add("map_available", bool(self._map))
+        stat.add("tf_timeout_s", getattr(self, "_tf_timeout", 0.2))
+        return stat
+
+    def _self_check(self) -> None:
+        ok = True
+        missing: List[str] = []
+        try:
+            pubs = dict(rospy.get_published_topics())
+        except Exception:
+            pubs = {}
+
+        for tparam, default in (("~scan_topic", "/scan"), ("~odom_topic", "/odom")):
+            tname = rospy.get_param(tparam, default)
+            if tname not in pubs:
+                missing.append(tname)
+
+        try:
+            self._tf_buffer.lookup_transform(
+                self._odom_frame,
+                self._base_frame,
+                rospy.Time(0),
+                rospy.Duration(0.01),
+            )
+        except Exception:
+            ok = False
+
+        if missing or not ok:
+            rospy.logerr("Self-check failed. missing_topics=%s tf_ok=%s", missing, ok)
+            rospy.signal_shutdown("Bringup failed")
 
 
 def main() -> None:

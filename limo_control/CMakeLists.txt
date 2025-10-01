@@ -16,6 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   sensor_msgs
+  diagnostic_updater
   tf
   pluginlib
   nav_core
@@ -29,7 +30,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES my_global_planner              # 供 move_base 載入
-  CATKIN_DEPENDS roscpp rospy geometry_msgs nav_msgs tf pluginlib nav_core costmap_2d base_local_planner
+  CATKIN_DEPENDS roscpp rospy geometry_msgs nav_msgs tf pluginlib nav_core costmap_2d base_local_planner diagnostic_updater
 )
 
 ##############################################################################

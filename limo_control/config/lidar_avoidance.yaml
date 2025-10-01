@@ -23,6 +23,9 @@ avoid_params:
   curvature_gain: 0.35
   clearance_gain: 0.8
   min_clearance_keep: 0.20
+  heading_hysteresis: 0.12
+  heading_lpf_alpha: 0.40
+  median_window: 3
   ttc_stop: 0.6
   ttc_slow: 1.2
   dyn_inflation_base: 0.35

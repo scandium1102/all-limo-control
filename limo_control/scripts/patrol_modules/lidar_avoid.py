@@ -45,6 +45,9 @@ class AvoidParams:
     curvature_gain: float
     clearance_gain: float
     min_clearance_keep: float
+    heading_hysteresis: float
+    heading_lpf_alpha: float
+    median_window: int
     ttc_stop: float
     ttc_slow: float
     dyn_inflation_base: float
@@ -104,6 +107,16 @@ class LidarAvoider:
         self._recovery_trial: int = 0
         self._recovery_sign: int = 1
         self._stuck_failed: bool = False
+        self._theta_lp: Optional[float] = None
+        self._theta_hold: float = 0.0
+        default_hyst = getattr(self.params, "heading_hysteresis", 0.12)
+        default_alpha = getattr(self.params, "heading_lpf_alpha", 0.4)
+        self._hyst_rad = float(rospy.get_param("~avoid_params/heading_hysteresis", default_hyst))
+        self._alpha_theta = float(rospy.get_param("~avoid_params/heading_lpf_alpha", default_alpha))
+        self._hyst_rad = max(0.0, self._hyst_rad)
+        self._alpha_theta = max(0.0, min(1.0, self._alpha_theta))
+        self.params.heading_hysteresis = self._hyst_rad
+        self.params.heading_lpf_alpha = self._alpha_theta
 
     # ------------------------------------------------------------------
     # Public API
@@ -180,8 +193,9 @@ class LidarAvoider:
         theta_hint = self._nav_hint_angle()
         chosen_theta = gap.theta_best
         blended_theta = self._blend_theta(chosen_theta, gap.theta_center, theta_hint)
+        theta_cmd = self._smooth_heading(blended_theta)
 
-        w_cmd = self._compute_angular_cmd(blended_theta)
+        w_cmd = self._compute_angular_cmd(theta_cmd)
         v_cmd = self._compute_linear_cmd(d_min, gap.d_min)
 
         ttc_min = self._compute_ttc(ranges, angles, v_cmd)
@@ -228,7 +242,7 @@ class LidarAvoider:
 
         cmd = self._limit_acceleration(cmd, dt)
 
-        dbg = self._make_debug(cmd, d_min, blended_theta, ttc_min, notes, gap)
+        dbg = self._make_debug(cmd, d_min, theta_cmd, ttc_min, notes, gap)
 
         self._last_cmd_time = now
         self._last_cmd = cmd
@@ -248,6 +262,8 @@ class LidarAvoider:
         self._recovery_active = False
         self._recovery_trial = 0
         self._stuck_failed = False
+        self._theta_lp = None
+        self._theta_hold = 0.0
 
     def pause(self, enabled: bool) -> None:
         self._paused = enabled
@@ -373,6 +389,16 @@ class LidarAvoider:
             return self._wrap_angle(theta_gap)
         blended = (1.0 - self.params.goal_bias) * theta_gap + self.params.goal_bias * theta_hint
         return self._wrap_angle(blended)
+
+    def _smooth_heading(self, theta: float) -> float:
+        if self._theta_lp is None:
+            self._theta_lp = theta
+        else:
+            delta = self._wrap_angle(theta - self._theta_lp)
+            self._theta_lp = self._wrap_angle(self._theta_lp + self._alpha_theta * delta)
+        if abs(self._wrap_angle(self._theta_lp - self._theta_hold)) > self._hyst_rad:
+            self._theta_hold = self._theta_lp
+        return self._theta_hold
 
     def _compute_angular_cmd(self, theta_ref: float) -> float:
         w_cmd = self.params.yaw_kp * theta_ref
