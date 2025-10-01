@@ -2,8 +2,9 @@
   <arg name="config_dir" default="$(find limo_control)/config"/>
   <arg name="scan_topic" default="/scan"/>
   <arg name="odom_topic" default="/odom"/>
-  <arg name="cmd_vel_topic" default="/cmd_vel"/>
-  <arg name="depth_cloud_topic" default="/camera/depth/points"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel_avoid"/>
+  <arg name="depth_cloud_topic" default="/camera/depth/points_filtered"/>
+  <arg name="depth_scan_topic" default="/camera/depth/scan"/>
   <arg name="base_frame" default="base_link"/>
   <arg name="depth_frame" default="camera_depth_optical_frame"/>
 
@@ -11,7 +12,12 @@
   <include file="$(find ydlidar_ros_driver)/launch/Tmini.launch"/>
 
   <include file="$(find limo_control)/launch/sensors/orbbec_dabai.launch"/>
-  <include file="$(find limo_control)/launch/sensors/depth_to_cloud.launch"/>
+  <include file="$(find limo_control)/launch/depth_cloud_pipeline.launch"/>
+
+  <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
+    <rosparam file="$(find limo_control)/config/twist_mux.yaml" command="load"/>
+    <remap from="cmd_vel_out" to="/cmd_vel"/>
+  </node>
 
   <rosparam file="$(arg config_dir)/lidar_avoidance.yaml" command="load" ns="depth_avoidance/avoid_params"/>
   <rosparam file="$(arg config_dir)/dynamic_tracker.yaml" command="load" ns="depth_avoidance/tracker_params"/>
@@ -22,6 +28,7 @@
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
     <param name="depth_cloud_topic" value="$(arg depth_cloud_topic)"/>
+    <param name="depth_scan_topic" value="$(arg depth_scan_topic)"/>
     <param name="base_frame" value="$(arg base_frame)"/>
     <param name="depth_frame" value="$(arg depth_frame)"/>
   </node>

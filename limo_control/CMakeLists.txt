@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   diagnostic_updater
+  dynamic_reconfigure
   tf2_ros
   tf2_geometry_msgs
   tf
@@ -31,6 +32,10 @@ find_package(catkin REQUIRED COMPONENTS
   depth_image_proc
   pcl_ros
   pcl_conversions
+)
+
+generate_dynamic_reconfigure_options(
+  cfg/Avoidance.cfg
 )
 
 ##############################################################################
@@ -47,6 +52,7 @@ catkin_package(
     sensor_msgs
     std_msgs
     diagnostic_updater
+    dynamic_reconfigure
     tf
     tf2_ros
     tf2_geometry_msgs

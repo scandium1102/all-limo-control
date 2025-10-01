@@ -2,7 +2,7 @@
   <arg name="config_dir"    default="$(find limo_control)/config"/>
   <arg name="scan_topic"    default="/scan"/>
   <arg name="odom_topic"    default="/odom"/>
-  <arg name="cmd_vel_topic" default="/cmd_vel"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel_avoid"/>
   <arg name="map_topic"     default="/map"/>
   <arg name="base_frame"    default="base_link"/>
   <arg name="odom_frame"    default="odom"/>
@@ -14,6 +14,11 @@
   <rosparam file="$(arg config_dir)/lidar_avoidance.yaml"  command="load" ns="limo_lidar_avoidance/avoid_params"/>
   <rosparam file="$(arg config_dir)/dynamic_tracker.yaml"  command="load" ns="limo_lidar_avoidance/tracker_params"/>
   <rosparam file="$(arg config_dir)/frontier_explore.yaml" command="load" ns="limo_lidar_avoidance/frontier_params"/>
+
+  <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
+    <rosparam file="$(find limo_control)/config/twist_mux.yaml" command="load"/>
+    <remap from="cmd_vel_out" to="/cmd_vel"/>
+  </node>
 
   <node pkg="limo_control" type="lidar_avoidance_node.py" name="limo_lidar_avoidance" output="screen">
     <param name="scan_topic"     value="$(arg scan_topic)"/>

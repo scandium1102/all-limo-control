@@ -22,7 +22,9 @@ from std_msgs.msg import String
 from tf.transformations import quaternion_matrix
 
 import rospkg
-from message_filters import ApproximateTimeSynchronizer, Subscriber as MFSubscriber
+import message_filters
+from dynamic_reconfigure.server import Server as DynServer
+from limo_control.cfg import AvoidanceConfig
 
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
@@ -90,13 +92,17 @@ class DepthAvoidanceNode:
         self._debug_pub = rospy.Publisher("~avoidance_debug_3d", String, queue_size=10)
 
         scan_topic = rospy.get_param("~scan_topic", "/scan")
-        depth_topic = rospy.get_param("~depth_cloud_topic", "/camera/depth/points")
+        depth_topic = rospy.get_param("~depth_cloud_topic", "/camera/depth/points_filtered")
+        depth_scan_topic = rospy.get_param("~depth_scan_topic", "/camera/depth/scan")
         odom_topic = rospy.get_param("~odom_topic", "/odom")
 
-        self._scan_sub = MFSubscriber(scan_topic, LaserScan)
-        self._depth_sub = MFSubscriber(depth_topic, PointCloud2)
-        self._sync = ApproximateTimeSynchronizer(
-            [self._scan_sub, self._depth_sub], queue_size=10, slop=self._sync_slop
+        self._scan_sub = message_filters.Subscriber(scan_topic, LaserScan)
+        self._depth_scan_sub = message_filters.Subscriber(depth_scan_topic, LaserScan)
+        self._depth_sub = message_filters.Subscriber(depth_topic, PointCloud2)
+        self._sync = message_filters.ApproximateTimeSynchronizer(
+            [self._scan_sub, self._depth_scan_sub, self._depth_sub],
+            queue_size=10,
+            slop=self._sync_slop,
         )
         self._sync.registerCallback(self._sync_cb)
 
@@ -104,13 +110,19 @@ class DepthAvoidanceNode:
 
         self._last_scan_time: Optional[rospy.Time] = None
         self._last_depth_time: Optional[rospy.Time] = None
+        self._last_depth_scan_time: Optional[rospy.Time] = None
         self._hazard_state = HazardReport()
+        self._last_cmd = Twist()
+        self._last_track_count: int = 0
+        self._depth_scan_topic = depth_scan_topic
 
         self._diag = Updater()
         self._diag.setHardwareID("depth_avoidance")
         self._diag.add(FunctionDiagnosticTask("inputs", self._diag_inputs))
 
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
+
+        self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg)
 
         rospy.on_shutdown(lambda: self._cmd_pub.publish(Twist()))
         rospy.loginfo("Depth avoidance node initialised")
@@ -155,15 +167,31 @@ class DepthAvoidanceNode:
             return base
         return cls(**base)
 
+    def _on_dyn_cfg(self, cfg, _level):
+        with self._lock:
+            self._avoid_params.v_max = float(cfg.v_max)
+            self._avoid_params.w_max = float(cfg.w_max)
+            k = max(1, int(cfg.median_window))
+            if k % 2 == 0:
+                k += 1
+            self._avoid_params.median_window = k
+            self._avoid_params.ttc_stop = float(cfg.ttc_stop)
+            self._avoid_params.ttc_slow = float(cfg.ttc_slow)
+            cfg.median_window = k
+        return cfg
+
     # ------------------------------------------------------------------
-    def _sync_cb(self, scan: LaserScan, cloud: PointCloud2) -> None:
+    def _sync_cb(self, scan: LaserScan, depth_scan: LaserScan, cloud: PointCloud2) -> None:
         clean_scan = self._sanitize_scan(scan)
+        depth_clean = self._sanitize_scan(depth_scan)
+        clean_scan = self._merge_depth_scan(clean_scan, depth_clean)
         now = rospy.Time.now()
 
         with self._lock:
             self._tracker.update_scan(clean_scan)
             self._avoider.update_scan(clean_scan)
             self._last_scan_time = now
+            self._last_depth_scan_time = now
 
             hazard = self._process_depth_cloud(cloud)
             self._hazard_state = hazard
@@ -179,7 +207,10 @@ class DepthAvoidanceNode:
             now = rospy.Time.now()
             if self._last_scan_time is None or (now - self._last_scan_time) > rospy.Duration(self._scan_timeout):
                 rospy.logwarn_throttle(1.0, "LiDAR scan timeout; stopping robot")
-                self._cmd_pub.publish(Twist())
+                zero = Twist()
+                self._cmd_pub.publish(zero)
+                self._last_cmd = zero
+                self._last_track_count = 0
                 self._diag.update()
                 return
 
@@ -188,6 +219,7 @@ class DepthAvoidanceNode:
                 self._hazard_state = HazardReport(notes=["depth_timeout"])  # degrade gracefully
 
             tracks = self._tracker.step(now.to_sec())
+            self._last_track_count = len(tracks)
             barriers = self._convert_barriers(tracks)
             self._avoider.ingest_dynamic_barriers(barriers)
             self._avoider.update_nav_hint(None)
@@ -196,6 +228,7 @@ class DepthAvoidanceNode:
             cmd = self._apply_hazards(cmd, self._hazard_state)
 
             self._cmd_pub.publish(cmd)
+            self._last_cmd = cmd
             if self._avoid_params.publish_debug:
                 try:
                     base_debug = json.loads(self._avoider.to_json(debug))
@@ -225,6 +258,11 @@ class DepthAvoidanceNode:
         rng = np.clip(rng, msg.range_min, msg.range_max)
 
         k = int(getattr(self._avoid_params, "median_window", 3))
+        if k < 1:
+            k = 1
+        if k % 2 == 0:
+            k += 1
+        self._avoid_params.median_window = k
         if k > 1:
             pad = k // 2
             if pad > 0:
@@ -246,6 +284,27 @@ class DepthAvoidanceNode:
         clean_scan.ranges = rng.tolist()
         clean_scan.intensities = list(msg.intensities)
         return clean_scan
+
+    @staticmethod
+    def _merge_depth_scan(primary: LaserScan, secondary: LaserScan) -> LaserScan:
+        if not secondary.ranges:
+            return primary
+
+        if len(primary.ranges) != len(secondary.ranges):
+            return primary
+
+        angle_tol = 1e-4
+        if (
+            abs(primary.angle_min - secondary.angle_min) > angle_tol
+            or abs(primary.angle_increment - secondary.angle_increment) > angle_tol
+        ):
+            return primary
+
+        pri = np.asarray(primary.ranges, dtype=np.float32)
+        sec = np.asarray(secondary.ranges, dtype=np.float32)
+        merged = np.minimum(pri, sec)
+        primary.ranges = merged.tolist()
+        return primary
 
     # ------------------------------------------------------------------
     def _process_depth_cloud(self, cloud: PointCloud2) -> HazardReport:
@@ -443,8 +502,14 @@ class DepthAvoidanceNode:
 
     # ------------------------------------------------------------------
     def _diag_inputs(self, stat):
-        scan_age = float("inf") if self._last_scan_time is None else (rospy.Time.now() - self._last_scan_time).to_sec()
-        depth_age = float("inf") if self._last_depth_time is None else (rospy.Time.now() - self._last_depth_time).to_sec()
+        now = rospy.Time.now()
+        scan_age = float("inf") if self._last_scan_time is None else (now - self._last_scan_time).to_sec()
+        depth_age = float("inf") if self._last_depth_time is None else (now - self._last_depth_time).to_sec()
+        depth_scan_age = (
+            float("inf")
+            if self._last_depth_scan_time is None
+            else (now - self._last_depth_scan_time).to_sec()
+        )
 
         if scan_age < self._scan_timeout and depth_age < self._depth_timeout:
             stat.summary(0, "OK")
@@ -455,9 +520,13 @@ class DepthAvoidanceNode:
 
         stat.add("scan_age_sec", scan_age)
         stat.add("depth_age_sec", depth_age)
+        stat.add("depth_scan_age_sec", depth_scan_age)
         stat.add("slope_deg", self._hazard_state.slope_angle_deg)
         stat.add("hazard_speed_scale", self._hazard_state.speed_scale)
         stat.add("hazard_notes", ",".join(self._hazard_state.notes))
+        stat.add("tracked_objects", self._last_track_count)
+        stat.add("cmd_linear_x", self._last_cmd.linear.x)
+        stat.add("cmd_angular_z", self._last_cmd.angular.z)
         return stat
 
 

@@ -19,6 +19,8 @@ from std_msgs.msg import String
 
 import rospkg
 from diagnostic_updater import FunctionDiagnosticTask, Updater
+from dynamic_reconfigure.server import Server as DynServer
+from limo_control.cfg import AvoidanceConfig
 
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, FrontierParams
@@ -70,12 +72,16 @@ class LidarAvoidanceNode:
         self._last_scan_time: Optional[rospy.Time] = None
         self._last_scan: Optional[Tuple[LaserScan, np.ndarray]] = None
         self._map: Optional[OccupancyGrid] = None
+        self._last_cmd = Twist()
+        self._last_track_count: int = 0
 
         self._diag = Updater()
         self._diag.setHardwareID("limo_lidar_avoidance")
         self._diag.add(FunctionDiagnosticTask("inputs", self._diag_inputs))
 
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
+
+        self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg)
 
         self._self_check()
 
@@ -107,12 +113,30 @@ class LidarAvoidanceNode:
 
         return cls(**base)
 
+    def _on_dyn_cfg(self, cfg, _level):
+        with self._lock:
+            self._avoid_params.v_max = float(cfg.v_max)
+            self._avoid_params.w_max = float(cfg.w_max)
+            k = max(1, int(cfg.median_window))
+            if k % 2 == 0:
+                k += 1
+            self._avoid_params.median_window = k
+            self._avoid_params.ttc_stop = float(cfg.ttc_stop)
+            self._avoid_params.ttc_slow = float(cfg.ttc_slow)
+            cfg.median_window = k
+        return cfg
+
     def _scan_cb(self, msg: LaserScan) -> None:
         rng = np.asarray(msg.ranges, dtype=np.float32)
         rng[~np.isfinite(rng)] = msg.range_max
         rng = np.clip(rng, msg.range_min, msg.range_max)
 
         k = int(getattr(self._avoid_params, "median_window", 3))
+        if k < 1:
+            k = 1
+        if k % 2 == 0:
+            k += 1
+        self._avoid_params.median_window = k
         if k > 1:
             pad = k // 2
             if pad > 0:
@@ -176,12 +200,16 @@ class LidarAvoidanceNode:
             if self._last_scan_time is None or (now - self._last_scan_time) > rospy.Duration(self._scan_timeout):
                 rospy.logwarn_throttle(1.0, "LiDAR scan timeout; stopping robot")
                 self._avoider.update_nav_hint(None)
-                self._cmd_pub.publish(Twist())
+                zero = Twist()
+                self._cmd_pub.publish(zero)
+                self._last_cmd = zero
                 self._last_goal = None
+                self._last_track_count = 0
                 self._diag.update()
                 return
 
             tracked = self._tracker.step(now.to_sec())
+            self._last_track_count = len(tracked)
             barriers = self._convert_barriers(tracked)
             self._avoider.ingest_dynamic_barriers(barriers)
 
@@ -201,6 +229,7 @@ class LidarAvoidanceNode:
 
             cmd, debug = self._avoider.compute_cmd()
             self._cmd_pub.publish(cmd)
+            self._last_cmd = cmd
             if self._avoid_params.publish_debug:
                 self._debug_pub.publish(self._avoider.to_json(debug))
 
@@ -240,10 +269,11 @@ class LidarAvoidanceNode:
         return math.atan2(t0, t1)
 
     def _diag_inputs(self, stat):
+        now = rospy.Time.now()
         if self._last_scan_time is None:
             age = float("inf")
         else:
-            age = (rospy.Time.now() - self._last_scan_time).to_sec()
+            age = (now - self._last_scan_time).to_sec()
         if age < self._scan_timeout:
             stat.summary(0, "OK")
         else:
@@ -251,6 +281,9 @@ class LidarAvoidanceNode:
         stat.add("scan_age_sec", age)
         stat.add("map_available", bool(self._map))
         stat.add("tf_timeout_s", getattr(self, "_tf_timeout", 0.2))
+        stat.add("tracked_objects", self._last_track_count)
+        stat.add("cmd_linear_x", self._last_cmd.linear.x)
+        stat.add("cmd_angular_z", self._last_cmd.angular.z)
         return stat
 
     def _self_check(self) -> None:
