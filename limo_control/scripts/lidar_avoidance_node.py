@@ -112,7 +112,7 @@ class LidarAvoidanceNode:
         rng[~np.isfinite(rng)] = msg.range_max
         rng = np.clip(rng, msg.range_min, msg.range_max)
 
-        k = int(rospy.get_param("~avoid_params/median_window", 3))
+        k = int(getattr(self._avoid_params, "median_window", 3))
         if k > 1:
             pad = k // 2
             if pad > 0:
@@ -254,31 +254,43 @@ class LidarAvoidanceNode:
         return stat
 
     def _self_check(self) -> None:
-        ok = True
+        strict = bool(rospy.get_param("~strict_self_check", False))
         missing: List[str] = []
-        try:
-            pubs = dict(rospy.get_published_topics())
-        except Exception:
-            pubs = {}
 
-        for tparam, default in (("~scan_topic", "/scan"), ("~odom_topic", "/odom")):
-            tname = rospy.get_param(tparam, default)
-            if tname not in pubs:
-                missing.append(tname)
+        for _ in range(10):
+            try:
+                pubs = dict(rospy.get_published_topics())
+            except Exception:
+                pubs = {}
 
+            missing = []
+            for tparam, default in (("~scan_topic", "/scan"), ("~odom_topic", "/odom")):
+                tname = rospy.get_param(tparam, default)
+                if tname not in pubs:
+                    missing.append(tname)
+
+            if not missing:
+                break
+
+            rospy.sleep(0.5)
+
+        tf_ok = True
         try:
             self._tf_buffer.lookup_transform(
                 self._odom_frame,
                 self._base_frame,
                 rospy.Time(0),
-                rospy.Duration(0.01),
+                rospy.Duration(self._tf_timeout),
             )
         except Exception:
-            ok = False
+            tf_ok = False
 
-        if missing or not ok:
-            rospy.logerr("Self-check failed. missing_topics=%s tf_ok=%s", missing, ok)
-            rospy.signal_shutdown("Bringup failed")
+        if missing or not tf_ok:
+            rospy.logerr(
+                "Self-check failed. missing_topics=%s tf_ok=%s", missing, tf_ok
+            )
+            if strict:
+                rospy.signal_shutdown("Bringup failed")
 
 
 def main() -> None:

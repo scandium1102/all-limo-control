@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """Depth-enhanced reactive avoidance node for the LIMO platform."""
 
 from __future__ import annotations
@@ -225,7 +224,7 @@ class DepthAvoidanceNode:
         rng[~np.isfinite(rng)] = msg.range_max
         rng = np.clip(rng, msg.range_min, msg.range_max)
 
-        k = int(rospy.get_param("~avoid_params/median_window", 3))
+        k = int(getattr(self._avoid_params, "median_window", 3))
         if k > 1:
             pad = k // 2
             if pad > 0:

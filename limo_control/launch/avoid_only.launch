@@ -10,12 +10,7 @@
   <arg name="scan_timeout"  default="0.5"/>
   <arg name="tf_timeout"   default="0.2"/>
 
-  <!-- 舊法（保持相容）：把 YAML 路徑傳給節點，由節點自己讀檔 -->
-  <param name="lidar_avoidance.yaml"  value="$(arg config_dir)/lidar_avoidance.yaml"/>
-  <param name="dynamic_tracker.yaml"  value="$(arg config_dir)/dynamic_tracker.yaml"/>
-  <param name="frontier_explore.yaml" value="$(arg config_dir)/frontier_explore.yaml"/>
-
-  <!-- 新法（建議）：把 YAML 直接載成參數樹，供節點選擇使用 -->
+  <!-- 把 YAML 直接載成參數樹，供節點選擇使用 -->
   <rosparam file="$(arg config_dir)/lidar_avoidance.yaml"  command="load" ns="limo_lidar_avoidance/avoid_params"/>
   <rosparam file="$(arg config_dir)/dynamic_tracker.yaml"  command="load" ns="limo_lidar_avoidance/tracker_params"/>
   <rosparam file="$(arg config_dir)/frontier_explore.yaml" command="load" ns="limo_lidar_avoidance/frontier_params"/>

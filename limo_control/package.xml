@@ -86,7 +86,6 @@
   <exec_depend>orbbec_camera</exec_depend>
   <exec_depend>mavros</exec_depend>
   <exec_depend>mavros_msgs</exec_depend>
-  <exec_depend>message_runtime</exec_depend>
   <!-- rospack not needed; use system package python3-rospkg instead -->
 
   <!-- ============ Pluginlib 匯出 (一定要有) ============ -->

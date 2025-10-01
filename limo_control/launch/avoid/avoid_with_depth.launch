@@ -17,10 +17,6 @@
   <rosparam file="$(arg config_dir)/dynamic_tracker.yaml" command="load" ns="depth_avoidance/tracker_params"/>
   <rosparam file="$(arg config_dir)/depth_avoidance.yaml" command="load" ns="depth_avoidance/depth"/>
 
-  <param name="depth_avoidance/lidar_avoidance.yaml" value="$(arg config_dir)/lidar_avoidance.yaml"/>
-  <param name="depth_avoidance/dynamic_tracker.yaml" value="$(arg config_dir)/dynamic_tracker.yaml"/>
-  <param name="depth_avoidance/depth_avoidance.yaml" value="$(arg config_dir)/depth_avoidance.yaml"/>
-
   <node pkg="limo_control" type="depth_avoidance_node.py" name="depth_avoidance" output="screen">
     <param name="scan_topic" value="$(arg scan_topic)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
@@ -30,5 +26,5 @@
     <param name="depth_frame" value="$(arg depth_frame)"/>
   </node>
 
-  <rosparam file="$(arg config_dir)/local_costmap_voxel.yaml" command="load"/>
+  <!-- Optional sample configuration for move_base voxel layer is available under config/samples/. -->
 </launch>
