@@ -1,30 +1,32 @@
 <launch>
   <arg name="config_dir"    default="$(find limo_control)/config"/>
-  <arg name="scan_topic"    default="scan"/>
-  <arg name="odom_topic"    default="odom"/>
-  <arg name="cmd_vel_topic" default="cmd_vel"/>
-  <arg name="map_topic"     default="map"/>
+  <arg name="scan_topic"    default="/scan"/>
+  <arg name="odom_topic"    default="/odom"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
+  <arg name="map_topic"     default="/map"/>
   <arg name="base_frame"    default="base_link"/>
   <arg name="odom_frame"    default="odom"/>
   <arg name="map_frame"     default="map"/>
+  <arg name="scan_timeout"  default="0.5"/>
 
   <!-- 舊法（保持相容）：把 YAML 路徑傳給節點，由節點自己讀檔 -->
-  <param name="lidar_avoidance.yaml" value="$(arg config_dir)/lidar_avoidance.yaml"/>
-  <param name="dynamic_tracker.yaml" value="$(arg config_dir)/dynamic_tracker.yaml"/>
+  <param name="lidar_avoidance.yaml"  value="$(arg config_dir)/lidar_avoidance.yaml"/>
+  <param name="dynamic_tracker.yaml"  value="$(arg config_dir)/dynamic_tracker.yaml"/>
   <param name="frontier_explore.yaml" value="$(arg config_dir)/frontier_explore.yaml"/>
 
   <!-- 新法（建議）：把 YAML 直接載成參數樹，供節點選擇使用 -->
-  <rosparam file="$(arg config_dir)/lidar_avoidance.yaml" command="load" ns="limo_lidar_avoidance/avoid_params"/>
-  <rosparam file="$(arg config_dir)/dynamic_tracker.yaml" command="load" ns="limo_lidar_avoidance/tracker_params"/>
+  <rosparam file="$(arg config_dir)/lidar_avoidance.yaml"  command="load" ns="limo_lidar_avoidance/avoid_params"/>
+  <rosparam file="$(arg config_dir)/dynamic_tracker.yaml"  command="load" ns="limo_lidar_avoidance/tracker_params"/>
   <rosparam file="$(arg config_dir)/frontier_explore.yaml" command="load" ns="limo_lidar_avoidance/frontier_params"/>
 
   <node pkg="limo_control" type="lidar_avoidance_node.py" name="limo_lidar_avoidance" output="screen">
-    <param name="scan_topic"    value="$(arg scan_topic)"/>
-    <param name="odom_topic"    value="$(arg odom_topic)"/>
-    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
-    <param name="map_topic"     value="$(arg map_topic)"/>
-    <param name="base_frame"    value="$(arg base_frame)"/>
-    <param name="odom_frame"    value="$(arg odom_frame)"/>
-    <param name="map_frame"     value="$(arg map_frame)"/>
+    <param name="scan_topic"     value="$(arg scan_topic)"/>
+    <param name="odom_topic"     value="$(arg odom_topic)"/>
+    <param name="cmd_vel_topic"  value="$(arg cmd_vel_topic)"/>
+    <param name="map_topic"      value="$(arg map_topic)"/>
+    <param name="base_frame"     value="$(arg base_frame)"/>
+    <param name="odom_frame"     value="$(arg odom_frame)"/>
+    <param name="map_frame"      value="$(arg map_frame)"/>
+    <param name="scan_timeout"   value="$(arg scan_timeout)"/>
   </node>
 </launch>

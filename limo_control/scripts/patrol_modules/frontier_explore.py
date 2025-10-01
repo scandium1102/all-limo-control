@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -104,10 +105,10 @@ class FrontierExplorer:
                 if not frontier_mask[y, x] or visited[y, x]:
                     continue
                 cluster: List[Tuple[int, int]] = []
-                queue = [(x, y)]
+                queue = deque([(x, y)])
                 visited[y, x] = True
                 while queue:
-                    cx, cy = queue.pop(0)
+                    cx, cy = queue.popleft()
                     cluster.append((cx, cy))
                     for nx in range(cx - 1, cx + 2):
                         for ny in range(cy - 1, cy + 2):

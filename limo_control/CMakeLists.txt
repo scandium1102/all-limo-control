@@ -89,5 +89,5 @@ install(DIRECTORY launch config
 #   find_package(rostest REQUIRED)
 #   add_rostest(test/xxx.test)
 # endif()
-catkin_python_setup()
+# catkin_python_setup()  # no setup.py; avoid redundant dependency
 

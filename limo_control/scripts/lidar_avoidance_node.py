@@ -8,7 +8,6 @@ import os
 import threading
 from typing import List, Optional
 
-import rospkg
 import rospy
 import tf2_ros
 import yaml
@@ -17,6 +16,8 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
+import rospkg
+
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, FrontierParams
 from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
@@ -24,7 +25,7 @@ from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
 
 class LidarAvoidanceNode:
     def __init__(self) -> None:
-        rospy.init_node("lidar_avoidance_node")
+        rospy.init_node("limo_lidar_avoidance")
         self._lock = threading.RLock()
 
         self._tf_buffer = tf2_ros.Buffer()
@@ -42,13 +43,16 @@ class LidarAvoidanceNode:
         self._odom_frame = rospy.get_param("~odom_frame", "odom")
         self._map_frame = rospy.get_param("~map_frame", "map")
 
-        cmd_topic = rospy.get_param("~cmd_vel_topic", "cmd_vel")
-        self._cmd_pub = rospy.Publisher(cmd_topic, Twist, queue_size=1)
-        self._debug_pub = rospy.Publisher("avoidance_debug", String, queue_size=10)
+        self._scan_timeout = float(rospy.get_param("~scan_timeout", 0.5))
+        self._tf_timeout = float(rospy.get_param("~tf_timeout", 0.2))
 
-        scan_topic = rospy.get_param("~scan_topic", "scan")
-        odom_topic = rospy.get_param("~odom_topic", "odom")
-        map_topic = rospy.get_param("~map_topic", "map")
+        cmd_topic = rospy.get_param("~cmd_vel_topic", "/cmd_vel")
+        self._cmd_pub = rospy.Publisher(cmd_topic, Twist, queue_size=1)
+        self._debug_pub = rospy.Publisher("~avoidance_debug", String, queue_size=10)
+
+        scan_topic = rospy.get_param("~scan_topic", "/scan")
+        odom_topic = rospy.get_param("~odom_topic", "/odom")
+        map_topic = rospy.get_param("~map_topic", "/map")
 
         self._scan_sub = rospy.Subscriber(scan_topic, LaserScan, self._scan_cb, queue_size=1)
         self._odom_sub = rospy.Subscriber(odom_topic, Odometry, self._odom_cb, queue_size=10)
@@ -59,7 +63,6 @@ class LidarAvoidanceNode:
             self._map_sub = rospy.Subscriber(map_topic, OccupancyGrid, self._map_cb, queue_size=1)
         else:
             self._map_sub = None
-            rospy.loginfo("Map topic disabled; running without frontier exploration guidance")
 
         self._last_goal: Optional[FrontierGoal] = None
         self._last_scan_time: Optional[float] = None
@@ -69,6 +72,8 @@ class LidarAvoidanceNode:
     def _load_params(self, filename: str, cls, param_ns: str):
         tree = rospy.get_param(f"~{param_ns}", None)
         if isinstance(tree, dict) and tree:
+            if param_ns in tree and isinstance(tree[param_ns], dict):
+                tree = tree[param_ns]
             return cls(**tree)
 
         pkg_path = rospkg.RosPack().get_path("limo_control")
@@ -81,6 +86,9 @@ class LidarAvoidanceNode:
         except OSError as exc:
             rospy.logfatal(f"Failed to load parameters from {param_path}: {exc}")
             raise
+
+        if isinstance(data, dict) and param_ns in data and isinstance(data[param_ns], dict):
+            data = data[param_ns]
 
         return cls(**data)
 
@@ -104,7 +112,12 @@ class LidarAvoidanceNode:
         if not self._map_enabled or not self._map_received:
             return
         try:
-            trans = self._tf_buffer.lookup_transform(self._map_frame, self._base_frame, rospy.Time(0), rospy.Duration(0.05))
+            trans = self._tf_buffer.lookup_transform(
+                self._map_frame,
+                self._base_frame,
+                rospy.Time(0),
+                rospy.Duration(self._tf_timeout),
+            )
             x = trans.transform.translation.x
             y = trans.transform.translation.y
             quat = trans.transform.rotation
@@ -117,7 +130,7 @@ class LidarAvoidanceNode:
         with self._lock:
             now = rospy.Time.now().to_sec()
 
-            if self._last_scan_time is None or (now - self._last_scan_time) > 0.5:
+            if self._last_scan_time is None or (now - self._last_scan_time) > self._scan_timeout:
                 rospy.logwarn_throttle(1.0, "LiDAR scan timeout; stopping robot")
                 self._avoider.update_nav_hint(None)
                 self._cmd_pub.publish(Twist())
@@ -135,11 +148,12 @@ class LidarAvoidanceNode:
             if goal is not None:
                 self._set_nav_hint(goal)
                 self._last_goal = goal
-            elif self._map_enabled and self._last_goal is not None:
+            elif self._map_enabled and self._map_received and self._last_goal is not None:
                 self._set_nav_hint(self._last_goal)
             else:
                 self._avoider.update_nav_hint(None)
-                self._last_goal = None
+                if not self._map_received:
+                    self._last_goal = None
 
             cmd, debug = self._avoider.compute_cmd()
             self._cmd_pub.publish(cmd)
@@ -182,6 +196,7 @@ class LidarAvoidanceNode:
 
 def main() -> None:
     node = LidarAvoidanceNode()
+    rospy.on_shutdown(lambda: node._cmd_pub.publish(Twist()))
     rospy.loginfo("Lidar avoidance node started")
     rospy.spin()
 
