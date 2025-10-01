@@ -66,8 +66,15 @@ install(FILES global_planner_plugin.xml
 
 ## 6-3 Python 腳本
 catkin_install_python(
-  PROGRAMS scripts/limo_patrol.py          # ← 巡邏/避障腳本
+  PROGRAMS
+    scripts/limo_patrol.py          # ← 巡邏/避障腳本
+    scripts/lidar_avoidance_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY scripts/patrol_modules/
+  DESTINATION ${CATKIN_PACKAGE_PYTHON_DESTINATION}/patrol_modules
+  FILES_MATCHING PATTERN "*.py"
 )
 
 ## 6-4 Launch、Config 等（如有其他檔可自行追加）

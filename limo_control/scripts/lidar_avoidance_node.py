@@ -30,9 +30,9 @@ class LidarAvoidanceNode:
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer)
 
-        self._avoid_params = self._load_params("lidar_avoidance.yaml", AvoidParams)
-        self._track_params = self._load_params("dynamic_tracker.yaml", TrackParams)
-        self._frontier_params = self._load_params("frontier_explore.yaml", FrontierParams)
+        self._avoid_params = self._load_params("lidar_avoidance.yaml", AvoidParams, "avoid_params")
+        self._track_params = self._load_params("dynamic_tracker.yaml", TrackParams, "tracker_params")
+        self._frontier_params = self._load_params("frontier_explore.yaml", FrontierParams, "frontier_params")
 
         self._avoider = LidarAvoider(self._avoid_params)
         self._tracker = DynamicTracker(self._track_params)
@@ -42,29 +42,53 @@ class LidarAvoidanceNode:
         self._odom_frame = rospy.get_param("~odom_frame", "odom")
         self._map_frame = rospy.get_param("~map_frame", "map")
 
-        self._cmd_pub = rospy.Publisher("cmd_vel", Twist, queue_size=1)
+        cmd_topic = rospy.get_param("~cmd_vel_topic", "cmd_vel")
+        self._cmd_pub = rospy.Publisher(cmd_topic, Twist, queue_size=1)
         self._debug_pub = rospy.Publisher("avoidance_debug", String, queue_size=10)
 
-        self._scan_sub = rospy.Subscriber("scan", LaserScan, self._scan_cb, queue_size=1)
-        self._odom_sub = rospy.Subscriber("odom", Odometry, self._odom_cb, queue_size=10)
-        self._map_sub = rospy.Subscriber("map", OccupancyGrid, self._map_cb, queue_size=1)
+        scan_topic = rospy.get_param("~scan_topic", "scan")
+        odom_topic = rospy.get_param("~odom_topic", "odom")
+        map_topic = rospy.get_param("~map_topic", "map")
+
+        self._scan_sub = rospy.Subscriber(scan_topic, LaserScan, self._scan_cb, queue_size=1)
+        self._odom_sub = rospy.Subscriber(odom_topic, Odometry, self._odom_cb, queue_size=10)
+
+        self._map_enabled = bool(map_topic)
+        self._map_received = False
+        if self._map_enabled:
+            self._map_sub = rospy.Subscriber(map_topic, OccupancyGrid, self._map_cb, queue_size=1)
+        else:
+            self._map_sub = None
+            rospy.loginfo("Map topic disabled; running without frontier exploration guidance")
 
         self._last_goal: Optional[FrontierGoal] = None
+        self._last_scan_time: Optional[float] = None
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
 
     # ------------------------------------------------------------------
-    def _load_params(self, filename: str, cls):
+    def _load_params(self, filename: str, cls, param_ns: str):
+        tree = rospy.get_param(f"~{param_ns}", None)
+        if isinstance(tree, dict) and tree:
+            return cls(**tree)
+
         pkg_path = rospkg.RosPack().get_path("limo_control")
         default_path = os.path.join(pkg_path, "config", filename)
         param_path = rospy.get_param(f"~{filename}", default_path)
-        with open(param_path, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh)
+
+        try:
+            with open(param_path, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+        except OSError as exc:
+            rospy.logfatal(f"Failed to load parameters from {param_path}: {exc}")
+            raise
+
         return cls(**data)
 
     def _scan_cb(self, msg: LaserScan) -> None:
         with self._lock:
             self._tracker.update_scan(msg)
             self._avoider.update_scan(msg)
+            self._last_scan_time = rospy.Time.now().to_sec()
 
     def _odom_cb(self, msg: Odometry) -> None:
         with self._lock:
@@ -74,8 +98,11 @@ class LidarAvoidanceNode:
     def _map_cb(self, msg: OccupancyGrid) -> None:
         with self._lock:
             self._explorer.update_map(msg)
+            self._map_received = True
 
     def _update_robot_pose(self) -> None:
+        if not self._map_enabled or not self._map_received:
+            return
         try:
             trans = self._tf_buffer.lookup_transform(self._map_frame, self._base_frame, rospy.Time(0), rospy.Duration(0.05))
             x = trans.transform.translation.x
@@ -89,18 +116,30 @@ class LidarAvoidanceNode:
     def _timer_cb(self, _event) -> None:
         with self._lock:
             now = rospy.Time.now().to_sec()
+
+            if self._last_scan_time is None or (now - self._last_scan_time) > 0.5:
+                rospy.logwarn_throttle(1.0, "LiDAR scan timeout; stopping robot")
+                self._avoider.update_nav_hint(None)
+                self._cmd_pub.publish(Twist())
+                self._last_goal = None
+                return
+
             tracked = self._tracker.step(now)
             barriers = self._convert_barriers(tracked)
             self._avoider.ingest_dynamic_barriers(barriers)
 
-            goal = self._explorer.pick_next_goal()
+            goal: Optional[FrontierGoal] = None
+            if self._map_enabled and self._map_received:
+                goal = self._explorer.pick_next_goal()
+
             if goal is not None:
                 self._set_nav_hint(goal)
                 self._last_goal = goal
-            elif self._last_goal is not None:
+            elif self._map_enabled and self._last_goal is not None:
                 self._set_nav_hint(self._last_goal)
             else:
                 self._avoider.update_nav_hint(None)
+                self._last_goal = None
 
             cmd, debug = self._avoider.compute_cmd()
             self._cmd_pub.publish(cmd)
@@ -115,13 +154,18 @@ class LidarAvoidanceNode:
                 continue
             radial_dir = (math.cos(obj.theta), math.sin(obj.theta))
             v_rel = obj.vx * radial_dir[0] + obj.vy * radial_dir[1] - robot_speed
-            radius = max(self._avoid_params.proxemics_min, self._avoid_params.dyn_inflation_base + self._avoid_params.dyn_inflation_gain * obj.speed)
-            barriers.append({
-                "theta": obj.theta,
-                "range": obj.range,
-                "v_rel": v_rel,
-                "radius": radius,
-            })
+            radius = max(
+                self._avoid_params.proxemics_min,
+                self._avoid_params.dyn_inflation_base + self._avoid_params.dyn_inflation_gain * obj.speed,
+            )
+            barriers.append(
+                {
+                    "theta": obj.theta,
+                    "range": obj.range,
+                    "v_rel": v_rel,
+                    "radius": radius,
+                }
+            )
         return barriers
 
     def _set_nav_hint(self, goal: FrontierGoal) -> None:
