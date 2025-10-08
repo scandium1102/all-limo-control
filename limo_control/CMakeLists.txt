@@ -32,6 +32,7 @@ find_package(catkin REQUIRED COMPONENTS
   depth_image_proc
   pcl_ros
   pcl_conversions
+  visualization_msgs
 )
 
 generate_dynamic_reconfigure_options(
@@ -67,6 +68,7 @@ catkin_package(
     depth_image_proc
     pcl_ros
     pcl_conversions
+    visualization_msgs
     ros_numpy
 )
 
@@ -86,8 +88,14 @@ include_directories(
 #target_link_libraries(offboard_control ${catkin_LIBRARIES})
 
 ## (2) ★ A* 全域規劃器插件  ─ 必須是 SHARED library ★
-add_library(my_global_planner SHARED src/my_global_planner.cpp)
-target_link_libraries(my_global_planner ${catkin_LIBRARIES})
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/my_global_planner.cpp")
+  add_library(my_global_planner SHARED src/my_global_planner.cpp)
+  target_link_libraries(my_global_planner ${catkin_LIBRARIES})
+  set(HAS_MY_GLOBAL_PLANNER TRUE)
+else()
+  message(STATUS "Skipping my_global_planner: src/my_global_planner.cpp not found")
+  set(HAS_MY_GLOBAL_PLANNER FALSE)
+endif()
 
 ##############################################################################
 # 6‧安裝規則
@@ -97,10 +105,12 @@ target_link_libraries(my_global_planner ${catkin_LIBRARIES})
  # RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 ## 6-2 Global-planner 插件(.so)  &  plugin 描述檔 (.xml)
-install(TARGETS my_global_planner
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION})
-install(FILES global_planner_plugin.xml
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+if(HAS_MY_GLOBAL_PLANNER)
+  install(TARGETS my_global_planner
+    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION})
+  install(FILES global_planner_plugin.xml
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+endif()
 
 ## 6-3 Python 腳本
 catkin_install_python(

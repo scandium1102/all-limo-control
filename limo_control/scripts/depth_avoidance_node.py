@@ -181,8 +181,9 @@ class DepthAvoidanceNode:
 
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
 
-        self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg)
-        self._dyn_hazard = DynServer(DepthHazardConfig, self._on_hazard_dyn)
+        # 將兩組 dynamic_reconfigure 放入不同 namespace，避免 service 名衝突
+        self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg, namespace="avoidance")
+        self._dyn_hazard = DynServer(DepthHazardConfig, self._on_hazard_dyn, namespace="depth")
 
         rospy.on_shutdown(lambda: self._cmd_pub.publish(Twist()))
         rospy.loginfo("Depth avoidance node initialised")

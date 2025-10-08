@@ -7,14 +7,19 @@
   <arg name="depth_scan_topic" default="/camera/depth/scan"/>
   <arg name="base_frame" default="base_link"/>
   <arg name="depth_frame" default="camera_depth_optical_frame"/>
+  <!-- 避免與 avoid_only.launch 重複啟動 twist_mux；預設關閉 -->
+  <arg name="start_mux" default="false"/>
 
   <include file="$(find limo_base)/launch/limo_base.launch"/>
   <include file="$(find ydlidar_ros_driver)/launch/Tmini.launch"/>
 
   <include file="$(find limo_control)/launch/sensors/orbbec_dabai.launch"/>
-  <include file="$(find limo_control)/launch/depth_cloud_pipeline.launch"/>
+  <!-- 傳遞 depth → scan 的輸出座標系（預設 base_link） -->
+  <include file="$(find limo_control)/launch/depth_cloud_pipeline.launch">
+    <arg name="scan_frame" value="$(arg base_frame)"/>
+  </include>
 
-  <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
+  <node if="$(arg start_mux)" pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
     <rosparam file="$(find limo_control)/config/twist_mux.yaml" command="load"/>
     <remap from="cmd_vel_out" to="/cmd_vel"/>
   </node>
