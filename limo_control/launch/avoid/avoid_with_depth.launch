@@ -11,7 +11,8 @@
   <arg name="start_mux" default="false"/>
 
   <include file="$(find limo_base)/launch/limo_base.launch"/>
-  <include file="$(find ydlidar_ros_driver)/launch/Tmini.launch"/>
+  <!-- Use USB serial LiDAR bringup to avoid network misconfig -->
+  <include file="$(find limo_control)/launch/sensors/lidar_tmini_usb.launch"/>
 
   <include file="$(find limo_control)/launch/sensors/orbbec_dabai.launch"/>
   <!-- 傳遞 depth → scan 的輸出座標系（預設 base_link） -->

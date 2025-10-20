@@ -1,0 +1,23 @@
+<launch>
+  <!-- YDLIDAR Tmini Plus over USB (CP210x) -->
+  <arg name="port" default="/dev/ydlidar"/>
+  <arg name="baudrate" default="230400"/>
+  <arg name="frame_id" default="laser_frame"/>
+  <arg name="frequency" default="8.0"/>
+
+  <node pkg="ydlidar_ros_driver" type="ydlidar_ros_driver_node" name="ydlidar_node" output="screen">
+    <param name="port"             value="$(arg port)"/>
+    <param name="baudrate"         value="$(arg baudrate)"/>
+    <param name="frame_id"         value="$(arg frame_id)"/>
+    <param name="lidar_type"       value="1"/>        <!-- TOF -->
+    <param name="resolution_fixed" value="true"/>
+    <param name="intensity"        value="true"/>
+    <param name="frequency"        value="$(arg frequency)"/>
+    <param name="auto_reconnect"   value="true"/>
+  </node>
+
+  <!-- base_link -> laser_frame (fill real pose later) -->
+  <node pkg="tf" type="static_transform_publisher" name="base_link_to_laser"
+        args="0 0 0 0 0 0 base_link $(arg frame_id) 20"/>
+</launch>
+

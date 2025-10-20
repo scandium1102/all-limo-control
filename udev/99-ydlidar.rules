@@ -1,0 +1,5 @@
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="ydlidar", MODE="0666", GROUP="dialout"
+
+# Optional: if rules need to match by manufacturer/product strings, uncomment and adjust below
+# SUBSYSTEM=="tty", ATTRS{manufacturer}=="Silicon Labs", ATTRS{product}=="CP210x UART Bridge", SYMLINK+="ydlidar", MODE="0666", GROUP="dialout"
+

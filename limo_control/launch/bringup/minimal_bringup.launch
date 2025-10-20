@@ -1,0 +1,8 @@
+<launch>
+  <!-- Bring up LIMO base + USB LiDAR (Tmini Plus) -->
+
+  <include file="$(find limo_base)/launch/limo_base.launch"/>
+
+  <include file="$(find limo_control)/launch/sensors/lidar_tmini_usb.launch"/>
+</launch>
+
