@@ -1,0 +1,28 @@
+﻿<launch>
+  <arg name="with_depth" default="false"/>
+  <arg name="with_avoid" default="true"/>
+  <arg name="with_slam"  default="true"/>
+  <arg name="with_rviz"  default="false"/>
+  <arg name="rviz_config" default=""/>
+
+  <include file="$(find limo_base)/launch/limo_base.launch"/>
+  <include file="$(find limo_control)/launch/sensors/lidar_tmini_usb.launch"/>
+
+  <group if="$(arg with_depth)">
+    <include file="$(find limo_control)/launch/sensors/orbbec_gemini330_v4l2.launch">
+      <arg name="enable_color" value="true"/>
+      <arg name="enable_depth" value="true"/>
+    </include>
+    <include file="$(find limo_control)/launch/depth_cloud_pipeline.launch">
+      <arg name="scan_frame" value="base_link"/>
+      <arg name="image_topic" value="depth/image_raw"/>
+    </include>
+  </group>
+
+  <include if="$(arg with_avoid)" file="$(find limo_control)/launch/avoid_only.launch"/>
+  <include if="$(arg with_slam)"  file="$(find limo_control)/launch/slam.launch"/>
+
+  <node if="$(arg with_rviz)" pkg="rviz" type="rviz" name="rviz">
+    <!-- If rviz_config is non-empty you can pass -d via args; simple default just opens RViz -->
+  </node>
+</launch>
