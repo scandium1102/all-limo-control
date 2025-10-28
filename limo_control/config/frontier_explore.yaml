@@ -1,0 +1,8 @@
+frontier_params:
+  min_cluster_size: 5
+  inflate_radius: 0.22
+  gain_weight: 1.0
+  dist_weight: 0.3
+  hysteresis_radius: 0.5
+  goal_reached_tol: 0.35
+  replan_period: 1.0

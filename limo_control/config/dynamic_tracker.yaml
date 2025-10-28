@@ -1,0 +1,9 @@
+tracker_params:
+  cluster_dist: 0.25
+  min_points: 3
+  max_tracks: 16
+  match_dist: 0.35
+  vanish_time: 1.2
+  speed_thresh_moving: 0.2
+  max_age: 6.0
+  smooth_alpha: 0.5

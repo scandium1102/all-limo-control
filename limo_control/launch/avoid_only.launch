@@ -1,0 +1,34 @@
+<launch>
+  <arg name="config_dir"    default="$(find limo_control)/config"/>
+  <arg name="scan_topic"    default="/scan"/>
+  <arg name="odom_topic"    default="/odom"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel_avoid"/>
+  <arg name="map_topic"     default="/map"/>
+  <arg name="base_frame"    default="base_link"/>
+  <arg name="odom_frame"    default="odom"/>
+  <arg name="map_frame"     default="map"/>
+  <arg name="scan_timeout"  default="0.5"/>
+  <arg name="tf_timeout"   default="0.2"/>
+
+  <!-- 把 YAML 直接載成參數樹，供節點選擇使用 -->
+  <rosparam file="$(arg config_dir)/lidar_avoidance.yaml"  command="load" ns="limo_lidar_avoidance/avoid_params"/>
+  <rosparam file="$(arg config_dir)/dynamic_tracker.yaml"  command="load" ns="limo_lidar_avoidance/tracker_params"/>
+  <rosparam file="$(arg config_dir)/frontier_explore.yaml" command="load" ns="limo_lidar_avoidance/frontier_params"/>
+
+  <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
+    <rosparam file="$(find limo_control)/config/twist_mux.yaml" command="load"/>
+    <remap from="cmd_vel_out" to="/cmd_vel"/>
+  </node>
+
+  <node pkg="limo_control" type="lidar_avoidance_node.py" name="limo_lidar_avoidance" output="screen">
+    <param name="scan_topic"     value="$(arg scan_topic)"/>
+    <param name="odom_topic"     value="$(arg odom_topic)"/>
+    <param name="cmd_vel_topic"  value="$(arg cmd_vel_topic)"/>
+    <param name="map_topic"      value="$(arg map_topic)"/>
+    <param name="base_frame"     value="$(arg base_frame)"/>
+    <param name="odom_frame"     value="$(arg odom_frame)"/>
+    <param name="map_frame"      value="$(arg map_frame)"/>
+    <param name="scan_timeout"   value="$(arg scan_timeout)"/>
+    <param name="tf_timeout"     value="$(arg tf_timeout)"/>
+  </node>
+</launch>
