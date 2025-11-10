@@ -1,6 +1,0 @@
-<launch>
-  <include file="$(find slam_toolbox)/launch/online_sync.launch"/>
-  <include file="$(find limo_control)/launch/avoid_only.launch">
-    <arg name="map_topic" value="/map"/>
-  </include>
-</launch>
