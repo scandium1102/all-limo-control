@@ -1,0 +1,17 @@
+# 全向底盤速度／加速度限制
+max_vel_x: 0.40        # 前進最大速度 (m/s)
+max_vel_y: 0.35        # 側移最大速度 (m/s)
+max_vel_theta: 1.2     # 旋轉最大角速度 (rad/s)
+
+acc_lim_x: 0.8
+acc_lim_y: 0.8
+acc_lim_theta: 1.5
+
+# 機器人外型 footprint，近似正方形
+footprint: [[-0.16,-0.13], [0.16,-0.13], [0.16,0.13], [-0.16,0.13]]
+
+# DWA 規劃器常用參數
+sim_time: 2.0
+xy_goal_tolerance: 0.10
+yaw_goal_tolerance: 0.10
+

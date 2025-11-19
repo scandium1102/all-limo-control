@@ -1,0 +1,23 @@
+<launch>
+  <arg name="scan_topic" default="/limo/scan"/>
+  <arg name="odom_topic" default="/odom"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
+  <arg name="depth_cloud_topic" default="/camera/depth/points_filtered"/>
+  <arg name="depth_scan_topic" default="/camera/depth/scan"/>
+  <arg name="base_frame" default="base_link"/>
+  <arg name="depth_frame" default="camera_depth_optical_frame"/>
+
+  <rosparam file="$(find limo_control)/config/lidar_avoidance.yaml" command="load" ns="depth_avoidance/avoid_params"/>
+  <rosparam file="$(find limo_control)/config/dynamic_tracker.yaml" command="load" ns="depth_avoidance/tracker_params"/>
+  <rosparam file="$(find limo_control)/config/depth_avoidance.yaml" command="load" ns="depth_avoidance/depth"/>
+
+  <node pkg="limo_control" type="depth_avoidance_node.py" name="depth_avoidance" output="screen">
+    <param name="scan_topic" value="$(arg scan_topic)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
+    <param name="depth_cloud_topic" value="$(arg depth_cloud_topic)"/>
+    <param name="depth_scan_topic" value="$(arg depth_scan_topic)"/>
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="depth_frame" value="$(arg depth_frame)"/>
+  </node>
+</launch>

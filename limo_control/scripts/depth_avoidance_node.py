@@ -26,7 +26,15 @@ from visualization_msgs.msg import Marker, MarkerArray
 import rospkg
 import message_filters
 from dynamic_reconfigure.server import Server as DynServer
-from limo_control.cfg import AvoidanceConfig, DepthHazardConfig
+
+try:
+    from limo_control.cfg import AvoidanceConfig, DepthHazardConfig
+except ImportError:
+    AvoidanceConfig = None
+    DepthHazardConfig = None
+    rospy.logwarn(
+        "[depth_avoidance] limo_control.cfg modules not found; dynamic_reconfigure disabled"
+    )
 
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
@@ -182,8 +190,14 @@ class DepthAvoidanceNode:
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
 
         # 將兩組 dynamic_reconfigure 放入不同 namespace，避免 service 名衝突
-        self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg, namespace="avoidance")
-        self._dyn_hazard = DynServer(DepthHazardConfig, self._on_hazard_dyn, namespace="depth")
+        if AvoidanceConfig is not None:
+            self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg, namespace="avoidance")
+        else:
+            self._dyn_srv = None
+        if DepthHazardConfig is not None:
+            self._dyn_hazard = DynServer(DepthHazardConfig, self._on_hazard_dyn, namespace="depth")
+        else:
+            self._dyn_hazard = None
 
         rospy.on_shutdown(lambda: self._cmd_pub.publish(Twist()))
         rospy.loginfo("Depth avoidance node initialised")

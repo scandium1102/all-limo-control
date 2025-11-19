@@ -20,7 +20,12 @@ from std_msgs.msg import String
 import rospkg
 from diagnostic_updater import FunctionDiagnosticTask, Updater
 from dynamic_reconfigure.server import Server as DynServer
-from limo_control.cfg import AvoidanceConfig
+
+try:
+    from limo_control.cfg import AvoidanceConfig
+except ImportError:
+    AvoidanceConfig = None
+    rospy.logwarn("[lidar_avoidance] limo_control.cfg modules not found; dynamic_reconfigure disabled")
 
 from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
 from patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, FrontierParams
@@ -81,7 +86,10 @@ class LidarAvoidanceNode:
 
         self._timer = rospy.Timer(rospy.Duration(0.1), self._timer_cb)
 
-        self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg)
+        if AvoidanceConfig is not None:
+            self._dyn_srv = DynServer(AvoidanceConfig, self._on_dyn_cfg)
+        else:
+            self._dyn_srv = None
 
         self._self_check()
 

@@ -35,10 +35,37 @@ find_package(catkin REQUIRED COMPONENTS
   visualization_msgs
 )
 
-generate_dynamic_reconfigure_options(
-  cfg/Avoidance.cfg
-  cfg/DepthHazard.cfg
+set(_limo_drcfg_files
+  ${CMAKE_CURRENT_SOURCE_DIR}/cfg/Avoidance.cfg
+  ${CMAKE_CURRENT_SOURCE_DIR}/cfg/DepthHazard.cfg
 )
+
+file(MAKE_DIRECTORY
+  ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}
+  ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+  ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/cfg
+)
+
+set(limo_control_CFG_PY "")
+set(limo_control_CFG_HDR "")
+foreach(_cfg ${_limo_drcfg_files})
+  get_filename_component(_cfg_name ${_cfg} NAME_WE)
+  set(_cfg_py ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/cfg/${_cfg_name}Config.py)
+  set(_cfg_hdr ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_INCLUDE_DESTINATION}/${_cfg_name}Config.h)
+  add_custom_command(
+    OUTPUT ${_cfg_py} ${_cfg_hdr}
+    COMMAND ${PYTHON_EXECUTABLE} ${_cfg} ${dynamic_reconfigure_PACKAGE_PATH}
+            ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}
+            ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+            ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}
+    DEPENDS ${_cfg}
+    COMMENT "Generating dynamic reconfigure files for ${_cfg_name}"
+  )
+  list(APPEND limo_control_CFG_PY ${_cfg_py})
+  list(APPEND limo_control_CFG_HDR ${_cfg_hdr})
+endforeach()
+
+add_custom_target(limo_control_gencfg ALL DEPENDS ${limo_control_CFG_PY} ${limo_control_CFG_HDR})
 
 ##############################################################################
 # 3‧catkin_package（讓其他 package 找得到）
@@ -46,6 +73,7 @@ generate_dynamic_reconfigure_options(
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES my_global_planner              # 供 move_base 載入
+  EXPORTED_TARGETS limo_control_gencfg
   CATKIN_DEPENDS
     roscpp
     rospy
@@ -112,6 +140,12 @@ if(HAS_MY_GLOBAL_PLANNER)
     DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 endif()
 
+install(FILES ${limo_control_CFG_HDR}
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
+
+install(DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}/cfg
+  DESTINATION ${CATKIN_PACKAGE_PYTHON_DESTINATION})
+
 ## 6-3 Python 腳本
 catkin_install_python(
   PROGRAMS
@@ -144,4 +178,3 @@ install(DIRECTORY launch config
 #   add_rostest(test/xxx.test)
 # endif()
 # catkin_python_setup()  # no setup.py; avoid redundant dependency
-

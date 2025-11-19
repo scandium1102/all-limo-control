@@ -1,12 +1,33 @@
 <launch>
-  <!-- Gazebo + LIMO 模型 + 感測器 + RViz（v1 版） -->
-  <include file="$(find limo_gazebo_sim)/launch/limo_ackerman.launch"/>
+  <arg name="gui" default="true"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="world" default="$(find limo_sim_bringup)/../worlds/hospital_world.world"/>
 
-  <!-- 把 LiDAR PointCloud 轉 LaserScan (依 6/15 日誌) -->
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <!-- Gazebo 空世界 -->
+  <include file="$(find limo_sim_bringup)/launch/world_hospital.launch">
+    <arg name="world" value="$(arg world)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+  </include>
+
+  <!-- Spawn 模型 + 控制器 -->
+  <include file="$(find limo_sim_bringup)/launch/spawn_limo.launch">
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+  </include>
+
+  <!-- 將 gazebo /scan 轉成 /limo/scan，讓避障沿用舊 topic -->
+  <node pkg="topic_tools" type="relay" name="relay_scan" args="/scan /limo/scan"/>
+
+  <!-- 深度影像 → 點雲 -->
   <node pkg="nodelet" type="nodelet" name="depth_manager" args="manager"/>
-  <node pkg="nodelet" type="nodelet" name="points_xyzrgb"
-        args="load depth_image_proc/point_cloud_xyzrgb depth_manager">
+  <node pkg="nodelet" type="nodelet" name="points_xyz"
+        args="load depth_image_proc/point_cloud_xyz depth_manager">
     <remap from="image" to="/camera/depth/image_raw"/>
     <remap from="camera_info" to="/camera/depth/camera_info"/>
+    <remap from="points" to="/camera/depth/points"/>
+    <param name="output_frame_id" value="camera_link"/>
   </node>
 </launch>
