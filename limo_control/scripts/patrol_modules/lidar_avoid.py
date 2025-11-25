@@ -45,6 +45,10 @@ class AvoidParams:
     curvature_gain: float
     clearance_gain: float
     min_clearance_keep: float
+    narrow_hint_angle: float
+    narrow_extra_clearance: float
+    corridor_lock_width: float
+    corridor_lock_time: float
     heading_hysteresis: float
     heading_lpf_alpha: float
     median_window: int
@@ -109,6 +113,7 @@ class LidarAvoider:
         self._stuck_failed: bool = False
         self._theta_lp: Optional[float] = None
         self._theta_hold: float = 0.0
+        self._corridor_lock_until: float = 0.0
         default_hyst = getattr(self.params, "heading_hysteresis", 0.12)
         default_alpha = getattr(self.params, "heading_lpf_alpha", 0.4)
         self._hyst_rad = float(rospy.get_param("~avoid_params/heading_hysteresis", default_hyst))
@@ -193,7 +198,14 @@ class LidarAvoider:
         theta_hint = self._nav_hint_angle()
         chosen_theta = gap.theta_best
         blended_theta = self._blend_theta(chosen_theta, gap.theta_center, theta_hint)
-        theta_cmd = self._smooth_heading(blended_theta)
+        if gap.width > 0.0 and gap.width <= self.params.corridor_lock_width:
+            self._corridor_lock_until = max(
+                self._corridor_lock_until, now + self.params.corridor_lock_time
+            )
+        elif now > self._corridor_lock_until:
+            self._corridor_lock_until = now
+
+        theta_cmd = self._smooth_heading(blended_theta, now)
 
         w_cmd = self._compute_angular_cmd(theta_cmd)
         v_cmd = self._compute_linear_cmd(d_min, gap.d_min)
@@ -264,6 +276,7 @@ class LidarAvoider:
         self._stuck_failed = False
         self._theta_lp = None
         self._theta_hold = 0.0
+        self._corridor_lock_until = 0.0
 
     def pause(self, enabled: bool) -> None:
         self._paused = enabled
@@ -355,7 +368,19 @@ class LidarAvoider:
         representative_range = float(min(np.max(sub_ranges), self.params.lookahead_distance))
         width_m = representative_range * width_angle
 
-        if width_m < max(self.params.gap_min_length, self.params.door_min_width):
+        min_width = max(self.params.gap_min_length, self.params.door_min_width)
+        allow_narrow = False
+        if width_m < min_width:
+            hint = self._nav_hint_angle()
+            theta_gap = float(0.5 * (sub_angles[0] + sub_angles[-1]))
+            min_passable = 2.0 * (self.params.base_radius + self.params.safety_margin) + self.params.narrow_extra_clearance
+            if (
+                hint is not None
+                and width_m >= min_passable
+                and abs(self._wrap_angle(theta_gap - hint)) <= self.params.narrow_hint_angle
+            ):
+                allow_narrow = True
+        if width_m < min_width and not allow_narrow:
             return None
 
         best_idx_local = int(np.argmax(sub_ranges))
@@ -390,14 +415,17 @@ class LidarAvoider:
         blended = (1.0 - self.params.goal_bias) * theta_gap + self.params.goal_bias * theta_hint
         return self._wrap_angle(blended)
 
-    def _smooth_heading(self, theta: float) -> float:
+    def _smooth_heading(self, theta: float, now: float) -> float:
         if self._theta_lp is None:
             self._theta_lp = theta
         else:
             delta = self._wrap_angle(theta - self._theta_lp)
             self._theta_lp = self._wrap_angle(self._theta_lp + self._alpha_theta * delta)
-        if abs(self._wrap_angle(self._theta_lp - self._theta_hold)) > self._hyst_rad:
-            self._theta_hold = self._theta_lp
+        candidate = self._theta_lp
+        if now <= self._corridor_lock_until:
+            candidate = self._theta_hold
+        if abs(self._wrap_angle(candidate - self._theta_hold)) > self._hyst_rad:
+            self._theta_hold = candidate
         return self._theta_hold
 
     def _compute_angular_cmd(self, theta_ref: float) -> float:

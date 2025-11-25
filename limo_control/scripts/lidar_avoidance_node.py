@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import os
 import threading
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import rospy
@@ -32,6 +33,23 @@ from patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, Fron
 from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
 
 
+@dataclass
+class ModeParams:
+    refine_unknown: float
+    complete_unknown: float
+    complete_hold_time: float
+    no_frontier_timeout: float
+    spin_duration: float
+    spin_speed: float
+    unknown_lpf_alpha: float
+    wall_follow_duration: float
+    wall_follow_speed: float
+    wall_follow_target_dist: float
+    wait_dyn_dist: float
+    wait_dyn_time: float
+    return_home_tol: float
+
+
 class LidarAvoidanceNode:
     def __init__(self) -> None:
         rospy.init_node("limo_lidar_avoidance")
@@ -43,6 +61,7 @@ class LidarAvoidanceNode:
         self._avoid_params = self._load_params("lidar_avoidance.yaml", AvoidParams, "avoid_params")
         self._track_params = self._load_params("dynamic_tracker.yaml", TrackParams, "tracker_params")
         self._frontier_params = self._load_params("frontier_explore.yaml", FrontierParams, "frontier_params")
+        self._mode_params = self._load_params("explore_mode.yaml", ModeParams, "mode_params")
 
         self._avoider = LidarAvoider(self._avoid_params)
         self._tracker = DynamicTracker(self._track_params)
@@ -79,6 +98,17 @@ class LidarAvoidanceNode:
         self._map: Optional[OccupancyGrid] = None
         self._last_cmd = Twist()
         self._last_track_count: int = 0
+        self._unknown_ratio: float = 1.0
+        self._mode: str = "NO_MAP"
+        self._complete_since: Optional[rospy.Time] = None
+        self._spin_until: Optional[rospy.Time] = None
+        self._spin_sign: int = 1
+        self._no_frontier_since: Optional[rospy.Time] = None
+        self._last_frontier_time: Optional[rospy.Time] = None
+        self._wait_until: Optional[rospy.Time] = None
+        self._wall_follow_until: Optional[rospy.Time] = None
+        self._home_pose: Optional[Tuple[float, float]] = None
+        self._spin_completed_no_frontier: bool = False
 
         self._diag = Updater()
         self._diag.setHardwareID("limo_lidar_avoidance")
@@ -182,6 +212,7 @@ class LidarAvoidanceNode:
             self._explorer.update_map(msg)
             self._map_received = True
             self._map = msg
+            self._update_unknown_ratio(msg)
 
     def _update_robot_pose(self) -> None:
         if not self._map_enabled or not self._map_received:
@@ -198,8 +229,20 @@ class LidarAvoidanceNode:
             quat = trans.transform.rotation
             yaw = self._yaw_from_quaternion(quat.x, quat.y, quat.z, quat.w)
             self._explorer.set_robot_pose(x, y, yaw)
+            if self._home_pose is None:
+                self._home_pose = (x, y)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
             pass
+
+    def _update_unknown_ratio(self, grid: OccupancyGrid) -> None:
+        data = np.asarray(grid.data, dtype=np.int8)
+        total = data.size
+        if total == 0:
+            return
+        unknown = float(np.count_nonzero(data == -1))
+        ratio = unknown / float(total)
+        alpha = max(0.0, min(1.0, self._mode_params.unknown_lpf_alpha))
+        self._unknown_ratio = alpha * ratio + (1.0 - alpha) * self._unknown_ratio
 
     def _timer_cb(self, _event) -> None:
         with self._lock:
@@ -221,14 +264,83 @@ class LidarAvoidanceNode:
             barriers = self._convert_barriers(tracked)
             self._avoider.ingest_dynamic_barriers(barriers)
 
+            if self._maybe_wait(tracked, now):
+                zero = Twist()
+                self._cmd_pub.publish(zero)
+                self._last_cmd = zero
+                self._diag.update()
+                return
+
             goal: Optional[FrontierGoal] = None
-            if self._map_enabled and self._map_received:
+            map_ready = self._map_enabled and self._map_received
+            if map_ready:
                 goal = self._explorer.pick_next_goal()
+                if goal is not None:
+                    self._last_frontier_time = now
+
+            frontier_available = goal is not None
+            if map_ready:
+                self._mode = self._select_mode(now, frontier_available)
+            else:
+                self._mode = "NO_MAP"
+
+            # Wall-follow keeps running until時間到或發現前沿
+            if self._mode == "WALL_FOLLOW":
+                if self._wall_follow_until is None or now > self._wall_follow_until:
+                    self._mode = "SPIN_SEARCH"
+                elif frontier_available:
+                    self._mode = "EXPLORE" if self._unknown_ratio > self._mode_params.refine_unknown else "REFINE"
+                else:
+                    cmd = self._wall_follow_cmd()
+                    self._cmd_pub.publish(cmd)
+                    self._last_cmd = cmd
+                    self._diag.update()
+                    return
+
+            # Return home: drive toward home pose using avoider
+            if self._mode == "RETURN_HOME":
+                if self._home_pose is None:
+                    self._mode = "COMPLETE"
+                else:
+                    hx, hy = self._home_pose
+                    robot_pose = getattr(self._explorer, "_robot_pose", None)
+                    if robot_pose is not None:
+                        rx, ry, _ = robot_pose
+                        dist_home = math.hypot(hx - rx, hy - ry)
+                        if dist_home <= self._mode_params.return_home_tol:
+                            self._mode = "COMPLETE"
+                        else:
+                            heading = math.atan2(hy - ry, hx - rx)
+                            self._avoider.update_nav_hint(Vector3(x=math.cos(heading), y=math.sin(heading), z=0.0))
+                            cmd, debug = self._avoider.compute_cmd()
+                            self._cmd_pub.publish(cmd)
+                            self._last_cmd = cmd
+                            if self._avoid_params.publish_debug:
+                                self._debug_pub.publish(self._avoider.to_json(debug))
+                            self._diag.update()
+                            return
+
+            if self._mode == "COMPLETE":
+                self._avoider.update_nav_hint(None)
+                zero = Twist()
+                self._cmd_pub.publish(zero)
+                self._last_cmd = zero
+                self._diag.update()
+                return
+
+            if self._mode == "SPIN_SEARCH":
+                self._avoider.update_nav_hint(None)
+                spin_cmd = Twist()
+                spin_cmd.angular.z = self._mode_params.spin_speed * float(self._spin_sign)
+                self._cmd_pub.publish(spin_cmd)
+                self._last_cmd = spin_cmd
+                self._diag.update()
+                return
 
             if goal is not None:
                 self._set_nav_hint(goal)
                 self._last_goal = goal
-            elif self._map_enabled and self._map_received and self._last_goal is not None:
+            elif self._map_enabled and self._map_received and self._last_goal is not None and self._mode != "NO_MAP":
                 self._set_nav_hint(self._last_goal)
             else:
                 self._avoider.update_nav_hint(None)
@@ -265,6 +377,89 @@ class LidarAvoidanceNode:
             )
         return barriers
 
+    def _maybe_wait(self, tracks, now: rospy.Time) -> bool:
+        # Enter wait if dynamic obstacle is very close
+        if self._wait_until is not None and now < self._wait_until:
+            self._mode = "WAIT"
+            return True
+        for obj in tracks:
+            if not obj.is_dynamic:
+                continue
+            if obj.range <= self._mode_params.wait_dyn_dist:
+                self._wait_until = now + rospy.Duration(self._mode_params.wait_dyn_time)
+                self._mode = "WAIT"
+                return True
+        self._wait_until = None
+        return False
+
+    def _wall_follow_cmd(self) -> Twist:
+        cmd = Twist()
+        if self._last_scan is None:
+            return cmd
+        scan, rng = self._last_scan
+        angles = scan.angle_min + np.arange(len(rng)) * scan.angle_increment
+        window = math.radians(15.0)
+        left_mask = (angles > math.pi / 2 - window) & (angles < math.pi / 2 + window)
+        right_mask = (angles < -math.pi / 2 + window) & (angles > -math.pi / 2 - window)
+        left_d = np.median(rng[left_mask]) if np.any(left_mask) else float("inf")
+        right_d = np.median(rng[right_mask]) if np.any(right_mask) else float("inf")
+        side = -1 if right_d <= left_d else 1  # -1: right-wall, +1: left-wall
+        wall_dist = right_d if side == -1 else left_d
+        if not math.isfinite(wall_dist):
+            wall_dist = self._mode_params.wall_follow_target_dist * 2.0
+        err = self._mode_params.wall_follow_target_dist - wall_dist
+        yaw_cmd = max(-self._avoid_params.w_max, min(self._avoid_params.w_max, 1.0 * err * side))
+        # Slow down if front too close
+        front_min = float(np.min(rng)) if rng.size > 0 else float("inf")
+        v = self._mode_params.wall_follow_speed
+        if front_min < self._avoid_params.stop_distance * 1.2:
+            v = 0.0
+        cmd.linear.x = v
+        cmd.angular.z = yaw_cmd
+        return cmd
+
+    def _select_mode(self, now: rospy.Time, frontier_available: bool) -> str:
+        # Keep spinning until time window ends
+        if self._mode == "SPIN_SEARCH" and self._spin_until is not None:
+            if now < self._spin_until:
+                return "SPIN_SEARCH"
+            # Spin finished
+            self._spin_until = None
+            self._spin_completed_no_frontier = not frontier_available
+
+        # Map completion check → return home
+        if self._unknown_ratio <= self._mode_params.complete_unknown and not frontier_available:
+            if self._complete_since is None:
+                self._complete_since = now
+            elif (now - self._complete_since).to_sec() >= self._mode_params.complete_hold_time:
+                return "RETURN_HOME"
+        else:
+            self._complete_since = None
+
+        # Trigger spin search if no frontier for a while
+        if not frontier_available:
+            if self._no_frontier_since is None:
+                self._no_frontier_since = now
+            elif (now - self._no_frontier_since).to_sec() >= self._mode_params.no_frontier_timeout:
+                self._spin_until = now + rospy.Duration(self._mode_params.spin_duration)
+                self._spin_sign *= -1
+                self._no_frontier_since = None
+                self._spin_completed_no_frontier = False
+                return "SPIN_SEARCH"
+        else:
+            self._no_frontier_since = None
+            self._spin_completed_no_frontier = False
+
+        # After spin with no frontier → wall follow
+        if not frontier_available and self._spin_completed_no_frontier:
+            self._wall_follow_until = now + rospy.Duration(self._mode_params.wall_follow_duration)
+            self._spin_completed_no_frontier = False
+            return "WALL_FOLLOW"
+
+        if self._unknown_ratio <= self._mode_params.refine_unknown:
+            return "REFINE"
+        return "EXPLORE"
+
     def _set_nav_hint(self, goal: FrontierGoal) -> None:
         heading = goal.heading_hint
         hint = Vector3(x=math.cos(heading), y=math.sin(heading), z=0.0)
@@ -288,6 +483,8 @@ class LidarAvoidanceNode:
             stat.summary(1, "No recent scan")
         stat.add("scan_age_sec", age)
         stat.add("map_available", bool(self._map))
+        stat.add("mode", getattr(self, "_mode", "unknown"))
+        stat.add("map_unknown_ratio", getattr(self, "_unknown_ratio", 1.0))
         stat.add("tf_timeout_s", getattr(self, "_tf_timeout", 0.2))
         stat.add("tracked_objects", self._last_track_count)
         stat.add("cmd_linear_x", self._last_cmd.linear.x)

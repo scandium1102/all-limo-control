@@ -3,6 +3,9 @@ frontier_params:
   inflate_radius: 0.22
   gain_weight: 1.0
   dist_weight: 0.3
+  dist_weight_clear: 0.12   # 區域已掃描乾淨時，降低距離懲罰，鼓勵去遠處/走廊
   hysteresis_radius: 0.5
   goal_reached_tol: 0.35
   replan_period: 1.0
+  local_unknown_radius: 2.5  # m，計算附近未知比例的半徑
+  min_unknown_ratio: 0.05    # 附近未知佔比低於此值視為已掃描完成

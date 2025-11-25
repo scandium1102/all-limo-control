@@ -16,9 +16,12 @@ class FrontierParams:
     inflate_radius: float
     gain_weight: float
     dist_weight: float
+    dist_weight_clear: float
     hysteresis_radius: float
     goal_reached_tol: float
     replan_period: float
+    local_unknown_radius: float
+    min_unknown_ratio: float
 
 
 @dataclass
@@ -64,11 +67,16 @@ class FrontierExplorer:
             self._last_goal = None
             return None
 
+        dist_weight = self.params.dist_weight
+        unknown_ratio = self._local_unknown_ratio(self.params.local_unknown_radius)
+        if unknown_ratio <= self.params.min_unknown_ratio:
+            dist_weight = self.params.dist_weight_clear
+
         best_goal: Optional[FrontierGoal] = None
         for cluster in clusters:
             if len(cluster) < self.params.min_cluster_size:
                 continue
-            goal = self._evaluate_cluster(cluster)
+            goal = self._evaluate_cluster(cluster, dist_weight)
             if goal is None:
                 continue
             if best_goal is None or goal.score > best_goal.score:
@@ -121,7 +129,7 @@ class FrontierExplorer:
                 clusters.append(cluster)
         return clusters
 
-    def _evaluate_cluster(self, cluster: List[Tuple[int, int]]) -> Optional[FrontierGoal]:
+    def _evaluate_cluster(self, cluster: List[Tuple[int, int]], dist_weight: float) -> Optional[FrontierGoal]:
         if self._robot_pose is None:
             return None
         robot_x, robot_y, _ = self._robot_pose
@@ -131,7 +139,7 @@ class FrontierExplorer:
         if not self._is_reachable(world_x, world_y):
             return None
         distance = math.hypot(world_x - robot_x, world_y - robot_y)
-        score = self.params.gain_weight * len(cluster) - self.params.dist_weight * distance
+        score = self.params.gain_weight * len(cluster) - dist_weight * distance
         heading = math.atan2(world_y - robot_y, world_x - robot_x)
 
         goal = FrontierGoal(map_xy=(world_x, world_y), heading_hint=heading, score=score)
@@ -147,6 +155,24 @@ class FrontierExplorer:
         x = ox + (ix + 0.5) * self._resolution
         y = oy + (iy + 0.5) * self._resolution
         return x, y
+
+    def _local_unknown_ratio(self, radius_m: float) -> float:
+        if self._map_array is None or self._robot_pose is None:
+            return 1.0
+        robot_x, robot_y, _ = self._robot_pose
+        cx = int((robot_x - self._origin[0]) / self._resolution)
+        cy = int((robot_y - self._origin[1]) / self._resolution)
+        radius_cells = max(1, int(radius_m / self._resolution))
+        h, w = self._map_array.shape
+        x0 = max(0, cx - radius_cells)
+        x1 = min(w, cx + radius_cells + 1)
+        y0 = max(0, cy - radius_cells)
+        y1 = min(h, cy + radius_cells + 1)
+        window = self._map_array[y0:y1, x0:x1]
+        if window.size == 0:
+            return 1.0
+        unknown = np.count_nonzero(window == -1)
+        return float(unknown) / float(window.size)
 
     def _is_reachable(self, wx: float, wy: float) -> bool:
         if self._map_array is None:

@@ -182,6 +182,9 @@ class DepthAvoidanceNode:
         self._last_cmd = Twist()
         self._last_track_count: int = 0
         self._depth_scan_topic = depth_scan_topic
+        self._backoff_until = rospy.Time(0)
+        self._backoff_dir = 1.0
+        self._backoff_speed = 0.12
 
         self._diag = Updater()
         self._diag.setHardwareID("depth_avoidance")
@@ -618,6 +621,14 @@ class DepthAvoidanceNode:
         align = float(np.clip(np.dot(plane_normal, up), -1.0, 1.0))
         slope_angle = math.degrees(math.acos(align))
         hazard.slope_angle_deg = slope_angle
+        min_ground_align = 0.7  # reject near-vertical planes (cos(angle) < 0.7 => ~>45deg)
+        if align < min_ground_align:
+            hazard.notes.append("ground_reject_vertical")
+            self._apply_speed_lpf(hazard)
+            self._update_marker_cache(stamp, roi_points, None, 0.0, drop_points, over_points)
+            self._cloud_proc_ms = (rospy.get_time() - proc_start) * 1000.0
+            self._update_hazard_change_rate(hazard)
+            return hazard
 
         slope_gate = self._compute_gate(
             slope_angle,
@@ -699,6 +710,7 @@ class DepthAvoidanceNode:
         best_offset: Optional[float] = None
         up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
         threshold = float(self._ransac_thresh)
+        min_up_dot = 0.7  # reject near-vertical walls
 
         for _ in range(iterations):
             idx = self._rng.choice(points.shape[0], 3, replace=False)
@@ -713,7 +725,7 @@ class DepthAvoidanceNode:
             if normal[2] < 0.0:
                 normal = -normal
             align = np.dot(normal, up)
-            if align < 0.5:
+            if align < min_up_dot:
                 continue
             d = -np.dot(normal, p0)
             distances = np.abs(points @ normal + d)
@@ -737,6 +749,8 @@ class DepthAvoidanceNode:
         if normal[2] < 0.0:
             normal = -normal
         normal = normal / np.linalg.norm(normal)
+        if np.dot(normal, up) < min_up_dot:
+            return None, None, np.array([], dtype=int)
         offset = -np.dot(normal, centroid)
         distances = np.abs(points @ normal + offset)
         refined_inliers = np.where(distances < threshold)[0]
@@ -920,6 +934,24 @@ class DepthAvoidanceNode:
             len(self._hazard_change_times) / window if window > 0.0 else 0.0
         )
 
+    def _start_backoff(self, now: rospy.Time, hazard: HazardReport) -> None:
+        duration = rospy.Duration(1.0)
+        self._backoff_until = now + duration
+        self._backoff_speed = max(0.08, min(0.18, self._avoid_params.v_max * 0.45))
+        if hazard.lateral_bias:
+            self._backoff_dir = float(-np.sign(hazard.lateral_bias))
+        else:
+            self._backoff_dir = float(self._rng.choice([-1.0, 1.0]))
+
+    def _start_backoff(self, now: rospy.Time, hazard: HazardReport) -> None:
+        duration = rospy.Duration(1.0)
+        self._backoff_until = now + duration
+        self._backoff_speed = max(0.08, min(0.18, self._avoid_params.v_max * 0.45))
+        if hazard.lateral_bias:
+            self._backoff_dir = np.sign(hazard.lateral_bias) * -1.0
+        else:
+            self._backoff_dir = float(self._rng.choice([-1.0, 1.0]))
+
     # ------------------------------------------------------------------
     def _apply_hazards(self, cmd: Twist, hazard: HazardReport) -> Twist:
         adjusted = Twist()
@@ -931,6 +963,18 @@ class DepthAvoidanceNode:
         if self._hazard_change_rate > self._hazard_change_limit:
             effective_vmax = min(effective_vmax, self._hazard_change_vmax)
 
+        now = rospy.Time.now()
+        if now < self._backoff_until:
+            adjusted.linear.x = -min(self._backoff_speed, effective_vmax * 0.5)
+            adjusted.linear.y = 0.0
+            steer = (
+                self._lat_gain_ang * np.clip(-hazard.lateral_bias, -1.0, 1.0)
+                if hazard.lateral_bias
+                else self._backoff_dir * min(0.6, self._avoid_params.w_max * 0.5)
+            )
+            adjusted.angular.z = np.clip(steer, -self._avoid_params.w_max, self._avoid_params.w_max)
+            return adjusted
+
         if self._avoid_params.holonomic:
             target_y = float(
                 np.clip(-hazard.lateral_bias * self._lat_gain_lin, -0.3, 0.3)
@@ -939,7 +983,20 @@ class DepthAvoidanceNode:
         else:
             self._lateral_nudge_lp = 0.0
 
-        if hazard.speed_scale <= 0.0:
+        if hazard.speed_scale <= 0.0 or hazard.slope_blocked:
+            drop_risk = hazard.drop_detected
+            blocked = hazard.slope_blocked or ("overhang" in hazard.notes) or ("slope_blocked" in hazard.notes)
+            if blocked and not drop_risk:
+                self._start_backoff(now, hazard)
+                adjusted.linear.x = -min(self._backoff_speed, effective_vmax * 0.5)
+                adjusted.linear.y = 0.0
+                steer = (
+                    self._lat_gain_ang * np.clip(-hazard.lateral_bias, -1.0, 1.0)
+                    if hazard.lateral_bias
+                    else self._backoff_dir * min(0.6, self._avoid_params.w_max * 0.5)
+                )
+                adjusted.angular.z = np.clip(steer, -self._avoid_params.w_max, self._avoid_params.w_max)
+                return adjusted
             adjusted.linear.x = 0.0
             adjusted.linear.y = 0.0
         else:
