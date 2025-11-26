@@ -1,0 +1,84 @@
+<launch>
+  <!-- Bring up move_base (A* global planner config) and explore_lite to generate frontier goals.
+       This launch intentionally does NOT start our custom lidar_avoidance/frontier node. -->
+
+  <arg name="base_frame" default="base_link"/>
+  <arg name="odom_frame" default="odom"/>
+  <arg name="map_frame"  default="map"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>      <!-- final output to robot -->
+  <arg name="cmd_vel_nav" default="/cmd_vel_nav"/>    <!-- nav after safety filter -->
+  <arg name="cmd_vel_raw" default="/cmd_vel_raw"/>    <!-- raw from move_base -->
+  <arg name="cmd_vel_avoid" default="/cmd_vel_avoid"/><!-- from lidar_avoidance -->
+  <arg name="map_topic" default="/map"/>
+  <arg name="scan_topic" default="/scan"/>
+
+  <!-- Move base with costmaps and custom global planner -->
+  <include file="$(find limo_control)/launch/move_base_astar.launch">
+    <arg name="cmd_vel_topic" value="$(arg cmd_vel_raw)"/>
+    <arg name="base_frame" value="$(arg base_frame)"/>
+    <arg name="odom_frame" value="$(arg odom_frame)"/>
+    <arg name="map_frame" value="$(arg map_frame)"/>
+    <arg name="scan_topic" value="$(arg scan_topic)"/>
+  </include>
+
+  <!-- Explore Lite node publishes frontier goals to move_base -->
+  <node pkg="explore_lite" type="explore" name="explore_lite" output="screen">
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="odom_frame" value="$(arg odom_frame)"/>
+    <param name="map_frame" value="$(arg map_frame)"/>
+    <param name="planner_frequency" value="0.5"/> <!-- Hz -->
+    <param name="progress_timeout" value="30.0"/> <!-- seconds without progress triggers replan -->
+    <param name="potential_scale" value="1.0"/>
+    <param name="orientation_scale" value="0.5"/>
+    <param name="gain_scale" value="1.0"/>
+    <param name="visualize" value="true"/>
+  </node>
+
+  <!-- Safety filter: takes move_base cmd_vel (raw) + LiDAR and publishes safe cmd_vel -->
+  <node pkg="limo_control" type="cmd_vel_safety_filter.py" name="cmd_vel_safety" output="screen">
+    <remap from="cmd_in" to="$(arg cmd_vel_raw)"/>
+    <remap from="cmd_out" to="$(arg cmd_vel_nav)"/>
+    <remap from="scan" to="$(arg scan_topic)"/>
+    <param name="stop_distance" value="0.25"/>
+    <param name="slow_distance" value="0.55"/>
+    <param name="ttc_stop" value="0.6"/>
+    <param name="ttc_slow" value="1.2"/>
+    <param name="front_arc_deg" value="30.0"/>
+  </node>
+
+  <!-- Lidar avoidance node as fallback/recovery (no frontier, purely reactive) -->
+  <node pkg="limo_control" type="lidar_avoidance_node.py" name="limo_lidar_avoidance" output="screen" launch-prefix="">
+    <param name="scan_topic" value="$(arg scan_topic)"/>
+    <param name="odom_topic" value="/odom"/>
+    <param name="map_topic" value=""/> <!-- disable frontier map usage -->
+    <param name="cmd_vel_topic" value="$(arg cmd_vel_avoid)"/>
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="odom_frame" value="$(arg odom_frame)"/>
+    <param name="map_frame" value="$(arg map_frame)"/>
+    <param name="scan_timeout" value="0.5"/>
+    <param name="tf_timeout" value="0.2"/>
+  </node>
+
+  <!-- Arbiter: choose nav cmd or avoidance cmd on failures -->
+  <node pkg="limo_control" type="cmd_vel_arbiter.py" name="cmd_vel_arbiter" output="screen">
+    <remap from="cmd_nav" to="$(arg cmd_vel_nav)"/>
+    <remap from="cmd_avoid" to="$(arg cmd_vel_avoid)"/>
+    <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>
+    <param name="recovery_time" value="3.0"/>
+    <param name="nav_timeout" value="1.0"/>
+  </node>
+
+  <!-- Supervisor: detect completion, send home goal, publish coverage markers -->
+  <node pkg="limo_control" type="explore_supervisor.py" name="explore_supervisor" output="screen">
+    <param name="map_topic" value="$(arg map_topic)"/>
+    <param name="status_topic" value="/move_base/status"/>
+    <param name="goal_topic" value="/move_base_simple/goal"/>
+    <param name="base_frame" value="$(arg base_frame)"/>
+    <param name="map_frame" value="$(arg map_frame)"/>
+    <param name="complete_unknown" value="0.05"/>
+    <param name="unknown_lpf_alpha" value="0.3"/>
+    <param name="idle_time" value="5.0"/>
+    <param name="milestone_step" value="0.1"/>
+    <param name="marker_lifetime" value="0.0"/>
+  </node>
+</launch>

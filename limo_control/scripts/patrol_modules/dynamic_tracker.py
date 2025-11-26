@@ -47,7 +47,7 @@ class DynamicTracker:
         self._last_scan = scan
 
     def update_odom(self, odom: Odometry) -> None:
-        """Store ego speed magnitude to reduce false dynamic detections caused by ego motion."""
+        """Store ego speed magnitude so static walls while moving are not flagged dynamic."""
         twist = odom.twist.twist
         self._ego_speed = math.hypot(twist.linear.x, twist.linear.y)
 
@@ -98,7 +98,6 @@ class DynamicTracker:
             vx = state.get("vx", 0.0)
             vy = state.get("vy", 0.0)
             speed = math.hypot(vx, vy)
-            # Subtract ego speed so static walls seen while moving are not marked dynamic
             speed_rel = max(0.0, speed - self._ego_speed)
             is_dynamic = speed_rel >= self.params.speed_thresh_moving
             tracked_objects.append(

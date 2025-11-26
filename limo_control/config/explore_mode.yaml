@@ -1,14 +1,14 @@
 mode_params:
-  refine_unknown: 0.12
-  complete_unknown: 0.03
-  complete_hold_time: 5.0
-  no_frontier_timeout: 6.0
-  spin_duration: 4.0
-  spin_speed: 0.6
-  unknown_lpf_alpha: 0.25
-  wall_follow_duration: 8.0
-  wall_follow_speed: 0.20
-  wall_follow_target_dist: 0.35
-  wait_dyn_dist: 0.5
-  wait_dyn_time: 1.2
-  return_home_tol: 0.5
+  refine_unknown: 0.12        # 未知比例 <= 此值 → 進入精修模式
+  complete_unknown: 0.03      # 未知比例 <= 此值且無前沿 → 視為完成
+  complete_hold_time: 5.0     # 達成完成條件後需持續多久才停止
+  no_frontier_timeout: 6.0    # 沒有前沿目標超過此秒數 → 啟動原地旋轉找新縫
+  spin_duration: 4.0          # 旋轉搜尋持續時間 (秒)
+  spin_speed: 0.6             # 旋轉角速度 (rad/s)
+  unknown_lpf_alpha: 0.25     # 未知比例低通濾波係數，0~1
+  wall_follow_duration: 8.0   # 旋轉後仍無前沿 → 貼牆行走秒數
+  wall_follow_speed: 0.20     # 貼牆線速度
+  wall_follow_target_dist: 0.35  # 目標離牆距離 (m)
+  wait_dyn_dist: 0.5          # 動態障礙物距離內先暫停
+  wait_dyn_time: 1.2          # 暫停等待秒數
+  return_home_tol: 0.5        # 回家判定半徑
