@@ -152,6 +152,9 @@ catkin_install_python(
     scripts/limo_patrol.py          # ← 巡邏/避障腳本
     scripts/lidar_avoidance_node.py
     scripts/depth_avoidance_node.py
+    scripts/cmd_vel_arbiter.py
+    scripts/cmd_vel_safety_filter.py
+    scripts/explore_supervisor.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

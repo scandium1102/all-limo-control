@@ -65,7 +65,7 @@
     <remap from="cmd_avoid" to="$(arg cmd_vel_avoid)"/>
     <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>
     <param name="recovery_time" value="3.0"/>
-    <param name="nav_timeout" value="1.0"/>
+    <param name="nav_timeout" value="2.5"/>
   </node>
 
   <!-- Supervisor: detect completion, send home goal, publish coverage markers -->
