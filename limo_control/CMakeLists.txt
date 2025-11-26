@@ -155,6 +155,7 @@ catkin_install_python(
     scripts/cmd_vel_arbiter.py
     scripts/cmd_vel_safety_filter.py
     scripts/explore_supervisor.py
+    scripts/room_segmenter.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

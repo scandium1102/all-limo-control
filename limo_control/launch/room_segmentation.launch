@@ -1,0 +1,15 @@
+<launch>
+  <arg name="map_topic" default="/map"/>
+  <arg name="min_clearance_m" default="0.35"/>
+  <arg name="min_room_area" default="2.0"/>
+  <arg name="unknown_as_obstacle" default="true"/>
+  <arg name="output_yaml" default=""/>
+
+  <node pkg="limo_control" type="room_segmenter.py" name="room_segmenter" output="screen">
+    <param name="map_topic" value="$(arg map_topic)"/>
+    <param name="min_clearance_m" value="$(arg min_clearance_m)"/>
+    <param name="min_room_area" value="$(arg min_room_area)"/>
+    <param name="unknown_as_obstacle" value="$(arg unknown_as_obstacle)"/>
+    <param name="output_yaml" value="$(arg output_yaml)"/>
+  </node>
+</launch>

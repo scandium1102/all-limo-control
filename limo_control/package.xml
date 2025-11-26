@@ -97,6 +97,7 @@
   <exec_depend>depthimage_to_laserscan</exec_depend>
   <exec_depend>twist_mux</exec_depend>
   <exec_depend>explore_lite</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>nodelet</exec_depend>
   <exec_depend>topic_tools</exec_depend>
   <exec_depend>mavros</exec_depend>
