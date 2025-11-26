@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 
 
@@ -28,6 +29,7 @@ class TrackedObject:
     vx: float
     vy: float
     speed: float
+    speed_rel: float
     is_dynamic: bool
     last_seen: float
 
@@ -39,9 +41,15 @@ class DynamicTracker:
         self._tracks: Dict[int, Dict[str, float]] = {}
         self._next_id: int = 1
         self._last_step_time: Optional[float] = None
+        self._ego_speed: float = 0.0
 
     def update_scan(self, scan: LaserScan) -> None:
         self._last_scan = scan
+
+    def update_odom(self, odom: Odometry) -> None:
+        """Store ego speed magnitude to reduce false dynamic detections caused by ego motion."""
+        twist = odom.twist.twist
+        self._ego_speed = math.hypot(twist.linear.x, twist.linear.y)
 
     def step(self, now: float) -> List[TrackedObject]:
         if self._last_scan is None:
@@ -90,7 +98,9 @@ class DynamicTracker:
             vx = state.get("vx", 0.0)
             vy = state.get("vy", 0.0)
             speed = math.hypot(vx, vy)
-            is_dynamic = speed >= self.params.speed_thresh_moving
+            # Subtract ego speed so static walls seen while moving are not marked dynamic
+            speed_rel = max(0.0, speed - self._ego_speed)
+            is_dynamic = speed_rel >= self.params.speed_thresh_moving
             tracked_objects.append(
                 TrackedObject(
                     id=track_id,
@@ -99,6 +109,7 @@ class DynamicTracker:
                     vx=vx,
                     vy=vy,
                     speed=speed,
+                    speed_rel=speed_rel,
                     is_dynamic=is_dynamic,
                     last_seen=state.get("last_seen", now),
                 )

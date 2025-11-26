@@ -4,6 +4,6 @@ tracker_params:
   max_tracks: 16
   match_dist: 0.35
   vanish_time: 1.2
-  speed_thresh_moving: 0.2
+  speed_thresh_moving: 0.4
   max_age: 6.0
   smooth_alpha: 0.5

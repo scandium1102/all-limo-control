@@ -205,6 +205,7 @@ class LidarAvoidanceNode:
     def _odom_cb(self, msg: Odometry) -> None:
         with self._lock:
             self._avoider.update_odom(msg)
+            self._tracker.update_odom(msg)
             self._update_robot_pose()
 
     def _map_cb(self, msg: OccupancyGrid) -> None:
@@ -361,11 +362,12 @@ class LidarAvoidanceNode:
         for obj in tracks:
             if not obj.is_dynamic:
                 continue
+            speed_rel = getattr(obj, "speed_rel", obj.speed)
             radial_dir = (math.cos(obj.theta), math.sin(obj.theta))
             v_rel = obj.vx * radial_dir[0] + obj.vy * radial_dir[1] - robot_speed
             radius = max(
                 self._avoid_params.proxemics_min,
-                self._avoid_params.dyn_inflation_base + self._avoid_params.dyn_inflation_gain * obj.speed,
+                self._avoid_params.dyn_inflation_base + self._avoid_params.dyn_inflation_gain * speed_rel,
             )
             barriers.append(
                 {
