@@ -176,6 +176,7 @@ catkin_install_python(
     scripts/cmd_vel_arbiter.py
     scripts/cmd_vel_safety_filter.py
     scripts/explore_supervisor.py
+    scripts/nlu_room_bridge.py
     scripts/room_segmenter.py
     scripts/room_navigator.py
     scripts/gemini_nlu.py

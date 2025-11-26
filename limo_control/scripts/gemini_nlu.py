@@ -37,14 +37,17 @@ class GeminiNLU:
             "請把以下指令轉成 JSON 結構，包含 intent、rooms(list)、actions(list)，輸出純 JSON：\n",
         )
 
-        api_key = os.environ.get("GOOGLE_API_KEY", "")
+        # API key precedence: explicit param > environment variable
+        api_key = rospy.get_param("~api_key", "") or os.environ.get("GOOGLE_API_KEY", "")
         if genai is None:
             rospy.logwarn("google-generativeai not installed; pip install google-generativeai to enable Gemini NLU.")
         elif not api_key:
             rospy.logwarn("GOOGLE_API_KEY not set; Gemini NLU will reject requests.")
         else:
             genai.configure(api_key=api_key)
-            rospy.loginfo("Gemini NLU configured with model %s", self.model_name)
+            rospy.loginfo("Gemini NLU configured with model %s (key from %s)",
+                          self.model_name,
+                          "~api_key" if rospy.get_param("~api_key", "") else "GOOGLE_API_KEY env")
 
         self._srv = rospy.Service("~parse", ParseText, self._on_parse)
 

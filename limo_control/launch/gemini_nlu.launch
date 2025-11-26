@@ -3,11 +3,23 @@
   <arg name="temperature" default="0.2"/>
   <arg name="request_timeout" default="15.0"/>
   <arg name="prompt_template" default="請把以下指令轉成 JSON 結構，包含 intent、rooms(list)、actions(list)，輸出純 JSON：\n"/>
+  <arg name="api_key" default=""/>  <!-- 建議用 launch 參數或環境變數傳入，避免硬編碼 -->
+  <arg name="command_topic" default="/vln_command"/>
+  <arg name="required_intent" default="goto"/>
 
   <node pkg="limo_control" type="gemini_nlu.py" name="gemini_nlu" output="screen">
     <param name="model" value="$(arg model)"/>
     <param name="temperature" value="$(arg temperature)"/>
     <param name="request_timeout" value="$(arg request_timeout)"/>
     <param name="prompt_template" value="$(arg prompt_template)"/>
+    <param name="api_key" value="$(arg api_key)"/>
+  </node>
+
+  <!-- Bridge: listen to text commands, call NLU, dispatch GoToRoom -->
+  <node pkg="limo_control" type="nlu_room_bridge.py" name="nlu_room_bridge" output="screen">
+    <remap from="command" to="$(arg command_topic)"/>
+    <param name="nlu_service" value="/gemini_nlu/parse"/>
+    <param name="goto_service" value="/room_navigator/go_to_room"/>
+    <param name="required_intent" value="$(arg required_intent)"/>
   </node>
 </launch>
