@@ -33,11 +33,20 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   pcl_conversions
   visualization_msgs
+  actionlib
+  actionlib_msgs
+  move_base_msgs
+  message_generation
 )
 
 set(_limo_drcfg_files
   ${CMAKE_CURRENT_SOURCE_DIR}/cfg/Avoidance.cfg
   ${CMAKE_CURRENT_SOURCE_DIR}/cfg/DepthHazard.cfg
+)
+
+add_service_files(
+  FILES
+    GoToRoom.srv
 )
 
 file(MAKE_DIRECTORY
@@ -67,13 +76,20 @@ endforeach()
 
 add_custom_target(limo_control_gencfg ALL DEPENDS ${limo_control_CFG_PY} ${limo_control_CFG_HDR})
 
+generate_messages(
+  DEPENDENCIES
+    std_msgs
+    geometry_msgs
+    actionlib_msgs
+)
+
 ##############################################################################
 # 3‧catkin_package（讓其他 package 找得到）
 ##############################################################################
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES my_global_planner              # 供 move_base 載入
-  EXPORTED_TARGETS limo_control_gencfg
+  EXPORTED_TARGETS limo_control_gencfg ${${PROJECT_NAME}_EXPORTED_TARGETS}
   CATKIN_DEPENDS
     roscpp
     rospy
@@ -97,6 +113,10 @@ catkin_package(
     pcl_ros
     pcl_conversions
     visualization_msgs
+    actionlib
+    actionlib_msgs
+    move_base_msgs
+    message_runtime
     ros_numpy
 )
 
@@ -156,6 +176,7 @@ catkin_install_python(
     scripts/cmd_vel_safety_filter.py
     scripts/explore_supervisor.py
     scripts/room_segmenter.py
+    scripts/room_navigator.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
