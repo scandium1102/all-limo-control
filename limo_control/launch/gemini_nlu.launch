@@ -1,0 +1,13 @@
+<launch>
+  <arg name="model" default="gemini-1.5-flash"/>
+  <arg name="temperature" default="0.2"/>
+  <arg name="request_timeout" default="15.0"/>
+  <arg name="prompt_template" default="請把以下指令轉成 JSON 結構，包含 intent、rooms(list)、actions(list)，輸出純 JSON：\n"/>
+
+  <node pkg="limo_control" type="gemini_nlu.py" name="gemini_nlu" output="screen">
+    <param name="model" value="$(arg model)"/>
+    <param name="temperature" value="$(arg temperature)"/>
+    <param name="request_timeout" value="$(arg request_timeout)"/>
+    <param name="prompt_template" value="$(arg prompt_template)"/>
+  </node>
+</launch>

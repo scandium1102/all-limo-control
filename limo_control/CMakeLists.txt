@@ -47,6 +47,7 @@ set(_limo_drcfg_files
 add_service_files(
   FILES
     GoToRoom.srv
+    ParseText.srv
 )
 
 file(MAKE_DIRECTORY
@@ -177,6 +178,7 @@ catkin_install_python(
     scripts/explore_supervisor.py
     scripts/room_segmenter.py
     scripts/room_navigator.py
+    scripts/gemini_nlu.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

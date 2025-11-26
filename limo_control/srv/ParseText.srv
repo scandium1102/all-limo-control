@@ -1,0 +1,5 @@
+string text
+---
+bool success
+string json_cmd
+string error
