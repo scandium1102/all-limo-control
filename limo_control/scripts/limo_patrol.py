@@ -24,6 +24,9 @@ from patrol_modules import (
 class LimoPatrolMain:
     def __init__(self):
         rospy.init_node("limo_patrol", anonymous=False)
+        if not rospy.get_param("~allow_legacy", False):
+            rospy.logerr("limo_patrol is legacy and not part of current pipeline. Set ~allow_legacy:=true to run.")
+            raise SystemExit(1)
 
         # ---------- 參數 ----------
         self.rate_hz = rospy.get_param("~rate_hz", 20)
@@ -153,4 +156,3 @@ if __name__ == "__main__":
         LimoPatrolMain().loop()
     except rospy.ROSInterruptException:
         pass
-

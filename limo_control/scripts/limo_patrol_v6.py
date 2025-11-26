@@ -110,6 +110,9 @@ class CoverageGrid:
 class LimoPatrolNode:
     def __init__(self):
         rospy.init_node('limo_patrol_v6', anonymous=False)
+        if not rospy.get_param("~allow_legacy", False):
+            rospy.logerr("limo_patrol_v6 is legacy and not part of current pipeline. Set ~allow_legacy:=true to run.")
+            raise SystemExit(1)
         # Parameters
         self.scan_topic = rospy.get_param("~scan_topic", "/limo/scan")
         self.cloud_topic = rospy.get_param("~cloud_topic", "/camera/depth/points")
@@ -505,4 +508,3 @@ if __name__ == '__main__':
         node.control_loop()
     except rospy.ROSInterruptException:
         pass
-
