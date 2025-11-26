@@ -26,3 +26,10 @@
 ### Notes
 - Gemini is cloud-only; no local GPU needed. Set `GOOGLE_API_KEY` env var. The node degrades gracefully if key/module missing.
 - Untracked files in patrol_modules remain uncommitted (coverage_grid.py, sensors.py, utils.py, wall_follow.py).
+
+### 不確定是否有用/有影響區
+- `limo_control/scripts/patrol_modules/coverage_grid.py`
+- `limo_control/scripts/patrol_modules/sensors.py`
+- `limo_control/scripts/patrol_modules/utils.py`
+- `limo_control/scripts/patrol_modules/wall_follow.py`
+（先納入版本控制，後續確認用途與影響）
