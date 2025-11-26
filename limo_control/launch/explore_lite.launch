@@ -12,13 +12,16 @@
   <arg name="map_topic" default="/map"/>
   <arg name="scan_topic" default="/scan"/>
 
-  <!-- Move base with costmaps and custom global planner -->
-  <include file="$(find limo_control)/launch/move_base_astar.launch">
-    <arg name="cmd_vel_topic" value="$(arg cmd_vel_raw)"/>
+  <!-- Core nav stack + safety filter (no direct relay to cmd_vel; arbiter handles final output) -->
+  <include file="$(find limo_control)/launch/nav_base.launch">
+    <arg name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
+    <arg name="cmd_vel_raw" value="$(arg cmd_vel_raw)"/>
+    <arg name="cmd_vel_nav" value="$(arg cmd_vel_nav)"/>
     <arg name="base_frame" value="$(arg base_frame)"/>
     <arg name="odom_frame" value="$(arg odom_frame)"/>
     <arg name="map_frame" value="$(arg map_frame)"/>
     <arg name="scan_topic" value="$(arg scan_topic)"/>
+    <arg name="relay_to_cmd_vel" value="false"/>
   </include>
 
   <!-- Explore Lite node publishes frontier goals to move_base -->
@@ -32,18 +35,6 @@
     <param name="orientation_scale" value="0.5"/>
     <param name="gain_scale" value="1.0"/>
     <param name="visualize" value="true"/>
-  </node>
-
-  <!-- Safety filter: takes move_base cmd_vel (raw) + LiDAR and publishes safe cmd_vel -->
-  <node pkg="limo_control" type="cmd_vel_safety_filter.py" name="cmd_vel_safety" output="screen">
-    <remap from="cmd_in" to="$(arg cmd_vel_raw)"/>
-    <remap from="cmd_out" to="$(arg cmd_vel_nav)"/>
-    <remap from="scan" to="$(arg scan_topic)"/>
-    <param name="stop_distance" value="0.25"/>
-    <param name="slow_distance" value="0.55"/>
-    <param name="ttc_stop" value="0.6"/>
-    <param name="ttc_slow" value="1.2"/>
-    <param name="front_arc_deg" value="30.0"/>
   </node>
 
   <!-- Lidar avoidance node as fallback/recovery (no frontier, purely reactive) -->

@@ -1,0 +1,41 @@
+<launch>
+  <!-- Core navigation stack with safety filter.
+       Produces cmd_vel_nav (safe nav cmd). By default relays to cmd_vel; set
+       relay_to_cmd_vel:=false when an arbiter will publish the final cmd_vel. -->
+
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>       <!-- final output (relay) -->
+  <arg name="cmd_vel_raw"   default="/cmd_vel_raw"/>   <!-- move_base output -->
+  <arg name="cmd_vel_nav"   default="/cmd_vel_nav"/>   <!-- after safety filter -->
+  <arg name="base_frame" default="base_link"/>
+  <arg name="odom_frame" default="odom"/>
+  <arg name="map_frame"  default="map"/>
+  <arg name="scan_topic" default="/scan"/>
+  <arg name="relay_to_cmd_vel" default="true"/>
+
+  <!-- Move base with costmaps -->
+  <include file="$(find limo_control)/launch/move_base_astar.launch">
+    <arg name="cmd_vel_topic" value="$(arg cmd_vel_raw)"/>
+    <arg name="base_frame" value="$(arg base_frame)"/>
+    <arg name="odom_frame" value="$(arg odom_frame)"/>
+    <arg name="map_frame" value="$(arg map_frame)"/>
+    <arg name="scan_topic" value="$(arg scan_topic)"/>
+  </include>
+
+  <!-- Safety filter on nav cmd_vel -->
+  <node pkg="limo_control" type="cmd_vel_safety_filter.py" name="cmd_vel_safety" output="screen">
+    <remap from="cmd_in" to="$(arg cmd_vel_raw)"/>
+    <remap from="cmd_out" to="$(arg cmd_vel_nav)"/>
+    <remap from="scan" to="$(arg scan_topic)"/>
+    <param name="stop_distance" value="0.25"/>
+    <param name="slow_distance" value="0.55"/>
+    <param name="ttc_stop" value="0.6"/>
+    <param name="ttc_slow" value="1.2"/>
+    <param name="front_arc_deg" value="30.0"/>
+  </node>
+
+  <!-- Optional relay to final cmd_vel when no arbiter is present -->
+  <node pkg="topic_tools" type="relay" name="cmd_vel_nav_relay" output="screen" if="$(arg relay_to_cmd_vel)">
+    <remap from="input" to="$(arg cmd_vel_nav)"/>
+    <remap from="output" to="$(arg cmd_vel_topic)"/>
+  </node>
+</launch>
