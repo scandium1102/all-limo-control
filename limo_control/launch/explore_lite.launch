@@ -30,7 +30,7 @@
     <param name="odom_frame" value="$(arg odom_frame)"/>
     <param name="map_frame" value="$(arg map_frame)"/>
     <param name="planner_frequency" value="0.5"/> <!-- Hz -->
-    <param name="progress_timeout" value="30.0"/> <!-- seconds without progress triggers replan -->
+    <param name="progress_timeout" value="5.0"/> <!-- seconds without progress triggers replan -->
     <param name="potential_scale" value="1.0"/>
     <param name="orientation_scale" value="0.5"/>
     <param name="gain_scale" value="1.0"/>
