@@ -39,6 +39,9 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
 )
 
+# Enable Python packaging (setup.py) so patrol_modules can be imported in devel/install
+catkin_python_setup()
+
 set(_limo_drcfg_files
   ${CMAKE_CURRENT_SOURCE_DIR}/cfg/Avoidance.cfg
   ${CMAKE_CURRENT_SOURCE_DIR}/cfg/DepthHazard.cfg

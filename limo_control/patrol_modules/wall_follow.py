@@ -23,7 +23,7 @@ import math
 import rospy
 from geometry_msgs.msg import Twist
 from .sensors import SensorHub
-from .coverage_grid import PID  # 直接重複利用已定義 PID；若無請 from patrol_modules.sensors import PID
+from .utils import PID
 
 __all__ = ["WallFollower"]
 
@@ -87,4 +87,3 @@ class WallFollower:
         cmd.angular.z = yaw_rate
 
         return cmd, False
-

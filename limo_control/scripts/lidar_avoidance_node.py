@@ -13,6 +13,14 @@ import rospy
 import tf2_ros
 import yaml
 import numpy as np
+
+# Ensure patrol_modules is importable even if PYTHONPATH is missing devel paths
+import sys
+import rospkg
+_pkg_path = rospkg.RosPack().get_path("limo_control")
+_patrol_dir = os.path.join(_pkg_path, "scripts", "patrol_modules")
+if _patrol_dir not in sys.path:
+    sys.path.insert(0, _patrol_dir)
 from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan

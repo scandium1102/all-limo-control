@@ -160,4 +160,3 @@ class SensorHub:
                 rospy.logerr_throttle(5, "PointCloud parse error: %s", e)
 
         return None if d == float("inf") else d
-
