@@ -2,14 +2,14 @@ avoid_params:
   holonomic: false
   v_max: 0.4
   v_min: 0.05
-  w_max: 1.0          # 降低角速度上限，減少左右擺頭
+  w_max: 1.5          # 提高角速度上限，便於貼牆轉向
   ax_max: 0.6
   aw_max: 1.2
   base_radius: 0.18
   safety_margin: 0.07
-  stop_distance: 0.25
-  slowdown_distance: 0.55
-  door_min_width: 0.45 # 放寬門洞/走廊通過判定
+  stop_distance: 0.05
+  slowdown_distance: 0.10
+  door_min_width: 0.40 # 放寬門洞/走廊通過判定
   narrow_hint_angle: 0.35        # 與導航方向差小於此角度時，允許窄縫通行
   narrow_extra_clearance: 0.02   # 允許窄縫時額外預留的空隙（加在車寬上）
   corridor_lock_width: 0.90      # 判定為走廊/門縫的寬度上限
@@ -30,13 +30,13 @@ avoid_params:
   heading_hysteresis: 0.28  # 增大角度滯後，避免頻繁換邊
   heading_lpf_alpha: 0.25   # 角度低通加強，減少抖動
   median_window: 3
-  ttc_stop: 0.6
-  ttc_slow: 1.2
+  ttc_stop: 0.0
+  ttc_slow: 0.0
   dyn_inflation_base: 0.30
   dyn_inflation_gain: 0.22
   proxemics_min: 0.40
   stuck_vel_eps: 0.02
-  stuck_time: 1.2
+  stuck_time: 10.0
   recovery_back: 0.25
   recovery_spin: 1.2   # 縮短復原旋轉角度，避免原地打轉過久
   recovery_trials: 3

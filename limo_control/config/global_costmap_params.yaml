@@ -1,15 +1,18 @@
 global_costmap:
   global_frame: map
   robot_base_frame: base_link
-  static_map: false        # ←一定要 false
+  static_map: true         # 使用 SLAM 提供的 /map 作為靜態層
   rolling_window: false    # 通常 false
   update_frequency: 1.0
   publish_frequency: 1.0
   transform_tolerance: 0.5
+
+  robot_radius: 0.15
 
   plugins:
     - {name: static_layer,    type: "costmap_2d::StaticLayer"}
     - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
 
   inflation_layer:
-    inflation_radius: 0.5
+    inflation_radius: 0.15
+    cost_scaling_factor: 30.0

@@ -26,6 +26,9 @@
 
   <!-- Explore Lite node publishes frontier goals to move_base -->
   <node pkg="explore_lite" type="explore" name="explore_lite" output="screen">
+    <!-- Feed explore_lite with move_base 的 global costmap -->
+    <remap from="costmap" to="/move_base/global_costmap/costmap"/>
+    <remap from="costmap_updates" to="/move_base/global_costmap/costmap_updates"/>
     <param name="base_frame" value="$(arg base_frame)"/>
     <param name="odom_frame" value="$(arg odom_frame)"/>
     <param name="map_frame" value="$(arg map_frame)"/>

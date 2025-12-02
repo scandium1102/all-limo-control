@@ -5,10 +5,10 @@
   <arg name="map_frame"  default="map"/>
   <arg name="scan_topic" default="/scan"/>
 
-  <!-- Costmap 參數 -->
-  <rosparam command="load" file="$(find limo_control)/config/global_costmap_params.yaml" ns="global_costmap"/>
-  <rosparam command="load" file="$(find limo_control)/config/local_costmap_params.yaml"  ns="local_costmap"/>
-  <rosparam command="load" file="$(find limo_control)/config/base_local_planner_params.yaml"/>
+  <!-- Costmap / DWA 參數：直接載入到 move_base namespace，避免回落預設 TrajectoryPlanner -->
+  <rosparam command="load" file="$(find limo_control)/config/global_costmap_params.yaml" ns="move_base"/>
+  <rosparam command="load" file="$(find limo_control)/config/local_costmap_params.yaml"  ns="move_base"/>
+  <rosparam command="load" file="$(find limo_control)/config/base_local_planner_params.yaml" ns="move_base"/>
 
   <node pkg="move_base" type="move_base" name="move_base" output="screen">
     <!-- 改用官方 global_planner 插件 -->

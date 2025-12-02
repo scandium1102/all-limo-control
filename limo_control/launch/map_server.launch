@@ -1,0 +1,5 @@
+<launch>
+  <!-- Simple map_server loader -->
+  <arg name="map_file" default="$(env HOME)/maps/hospital.yaml"/>
+  <node pkg="map_server" type="map_server" name="map_server" args="$(arg map_file)" output="screen"/>
+</launch>
