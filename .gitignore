@@ -5,7 +5,15 @@ __pycache__/
 # ROS
 build/
 devel/
+install/
+logs/
+.catkin_tools/
 *.log
+*.bag
+
+# Local backup files
+*.bak
+*_backup.*
 
 # Editor
 .vscode/
@@ -13,3 +21,4 @@ devel/
 
 # System
 .DS_Store
+Thumbs.db

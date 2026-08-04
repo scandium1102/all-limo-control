@@ -11,7 +11,7 @@ import rospy
 from geometry_msgs.msg import Twist
 
 # 匯入模組
-from patrol_modules import (
+from limo_control.patrol_modules import (
     SensorHub,
     WallFollower,
     BackoffBehavior,
@@ -38,6 +38,7 @@ class LimoPatrolMain:
         self.backoff = BackoffBehavior(self.sensor, self.cmd_pub)
         self.recovery = StuckRecovery(self.sensor, self.cmd_pub)
         self.returner = None  # 返航物件啟動時建立
+        self.resume_after_avoid = "FWD"
 
         # ---------- 狀態 ----------
         self.state = "INIT"  # INIT → FWD → AVOID / RECOVERY → RETURN → STOP
@@ -97,6 +98,7 @@ class LimoPatrolMain:
         if blocked:
             # 切換到避障
             self.backoff.start(turn_dir="left")
+            self.resume_after_avoid = "FWD"
             self.state = "AVOID"
             rospy.loginfo("FWD→AVOID")
             return
@@ -114,8 +116,8 @@ class LimoPatrolMain:
     def do_avoid(self):
         self.backoff.step()
         if self.backoff.done:
-            self.state = "FWD"
-            rospy.loginfo("AVOID→FWD")
+            self.state = self.resume_after_avoid
+            rospy.loginfo("AVOID→%s", self.state)
 
     # --------------------------------------------------
     def do_recovery(self):
@@ -135,6 +137,7 @@ class LimoPatrolMain:
         done, blocked = self.returner.step()
         if blocked:
             self.backoff.start(turn_dir="left")
+            self.resume_after_avoid = "RETURN"
             self.state = "AVOID"
             rospy.loginfo("RETURN→AVOID")
         elif done:

@@ -22,9 +22,9 @@ from diagnostic_updater import FunctionDiagnosticTask, Updater
 from dynamic_reconfigure.server import Server as DynServer
 from limo_control.cfg import AvoidanceConfig
 
-from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
-from patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, FrontierParams
-from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
+from limo_control.patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
+from limo_control.patrol_modules.frontier_explore import FrontierExplorer, FrontierGoal, FrontierParams
+from limo_control.patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
 
 
 class LidarAvoidanceNode:

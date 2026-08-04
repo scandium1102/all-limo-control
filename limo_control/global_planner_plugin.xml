@@ -1,4 +1,4 @@
-<library path="libmy_global_planner">
+<library path="lib/libmy_global_planner">
   <class name="my_planner_namespace/MyGlobalPlanner"
          type="my_planner_namespace::MyGlobalPlanner"
          base_class_type="nav_core::BaseGlobalPlanner"/>
