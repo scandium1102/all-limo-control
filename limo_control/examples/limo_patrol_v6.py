@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 LIMO Autonomous Patrol Script (version 6).
@@ -16,9 +16,9 @@ Key features:
 8. All major parameters are configurable via ROS parameters or dynamic reconfigure (rqt_reconfigure) for on-line tuning.
 
 Usage:
-- Place this script in `~/limo_ws/src/limo_control/scripts/limo_patrol_v6.py` and make it executable.
+- This file is retained as a historical all-in-one example and is not installed by CMake.
+- Copy it into a ROS package's `scripts/` directory only when intentionally testing the legacy implementation.
 - Ensure the simulation environment is running (e.g., `roslaunch limo_control limo_sim_sensors.launch` to start Gazebo and sensors).
-- Run this script with ROS: `rosrun limo_control limo_patrol_v6.py` (override parameters via command-line or rosparam as needed).
 - Topics:
     * Subscribes to `/limo/scan` (sensor_msgs/LaserScan) for LiDAR data.
     * Subscribes to `/camera/depth/points` (sensor_msgs/PointCloud2) for depth camera point cloud.
@@ -30,8 +30,8 @@ Usage:
 Simulation start suggestion:
 1. In one terminal, launch the simulation: 
    `roslaunch limo_control limo_sim_sensors.launch`
-2. In another terminal, run this patrol script: 
-   `rosrun limo_control limo_patrol_v6.py _patrol_duration:=180`
+2. In another terminal, run this patrol script from its directory:
+   `python3 limo_patrol_v6.py _patrol_duration:=180`
    (This example runs patrol for 180 seconds before returning home; adjust parameters as needed.)
 3. Optionally, open `rqt_reconfigure` to fine-tune parameters on the fly (requires dynamic_reconfigure server configuration).
 """

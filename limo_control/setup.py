@@ -1,8 +1,12 @@
-from setuptools import setup, find_packages
-setup(
-    name="limo_control",
-    version="0.1.0",
-    packages=find_packages(),   # 自動包含 patrol_modules
-    install_requires=['rospy'],
+#!/usr/bin/env python3
+
+from catkin_pkg.python_setup import generate_distutils_setup
+from setuptools import setup
+
+
+setup_args = generate_distutils_setup(
+    packages=["limo_control", "limo_control.patrol_modules"],
+    package_dir={"": "src"},
 )
 
+setup(**setup_args)

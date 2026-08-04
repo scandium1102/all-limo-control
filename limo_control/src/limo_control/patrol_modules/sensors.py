@@ -102,7 +102,7 @@ class SensorHub:
         angle = self.scan.angle_min
         min_r = float("inf")
         for r in self.scan.ranges:
-            if -self.lidar_arc <= angle <= self.lidar_arc and r > 0.0:
+            if -self.lidar_arc <= angle <= self.lidar_arc and math.isfinite(r) and r > 0.0:
                 min_r = min(min_r, r)
             angle += self.scan.angle_increment
 
@@ -120,8 +120,25 @@ class SensorHub:
                 self.right_center - self.right_half
                 <= angle
                 <= self.right_center + self.right_half
+                and math.isfinite(r)
                 and r > 0.0
             ):
+                min_r = min(min_r, r)
+            angle += self.scan.angle_increment
+
+        return min_r if min_r != float("inf") else None
+
+    def arc_min_distance(self, start_deg, end_deg):
+        """Return the closest valid LiDAR range inside an angular arc."""
+        if not self.scan:
+            return None
+
+        start = math.radians(min(start_deg, end_deg))
+        end = math.radians(max(start_deg, end_deg))
+        angle = self.scan.angle_min
+        min_r = float("inf")
+        for r in self.scan.ranges:
+            if start <= angle <= end and math.isfinite(r) and r > 0.0:
                 min_r = min(min_r, r)
             angle += self.scan.angle_increment
 
