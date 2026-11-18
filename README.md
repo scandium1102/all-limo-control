@@ -76,7 +76,7 @@ roslaunch limo_control avoid_only.launch
 For the physical-sensor launch path:
 
 ```bash
-roslaunch limo_control avoid_with_depth.launch
+roslaunch limo_control avoid/avoid_with_depth.launch
 ```
 
 ## Validation
