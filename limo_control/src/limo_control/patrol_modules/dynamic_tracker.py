@@ -55,13 +55,13 @@ class DynamicTracker:
         points = self._extract_points(self._last_scan)
         clusters = self._cluster_points(points)
 
-        used_tracks: Dict[int, bool] = {tid: False for tid in self._tracks}
+        used_tracks = set()
         updated_tracks: Dict[int, Dict[str, float]] = {}
 
         for cluster in clusters:
             cx, cy = self._cluster_centroid(cluster)
-            best_track_id = self._match_track(cx, cy, dt)
-            if best_track_id is None and len(self._tracks) + len(updated_tracks) < self.params.max_tracks:
+            best_track_id = self._match_track(cx, cy, dt, used_tracks)
+            if best_track_id is None and len(self._tracks) < self.params.max_tracks:
                 best_track_id = self._allocate_track(cx, cy, now)
             if best_track_id is None:
                 continue
@@ -71,10 +71,10 @@ class DynamicTracker:
             track_state = self._alpha_beta_update(track_state, cx, cy, dt)
             track_state["last_seen"] = now
             updated_tracks[best_track_id] = track_state
-            used_tracks[best_track_id] = True
+            used_tracks.add(best_track_id)
 
         for track_id, state in self._tracks.items():
-            if used_tracks.get(track_id):
+            if track_id in used_tracks:
                 continue
             age = now - state.get("last_seen", now)
             if age <= self.params.vanish_time and state.get("age", 0.0) <= self.params.max_age:
@@ -138,10 +138,12 @@ class DynamicTracker:
         ys = [pt["y"] for pt in cluster]
         return float(np.mean(xs)), float(np.mean(ys))
 
-    def _match_track(self, mx: float, my: float, dt: float) -> Optional[int]:
+    def _match_track(self, mx: float, my: float, dt: float, used_tracks) -> Optional[int]:
         best_track_id: Optional[int] = None
         best_dist = float("inf")
         for track_id, state in self._tracks.items():
+            if track_id in used_tracks:
+                continue
             pred_x = state["x"] + state.get("vx", 0.0) * dt
             pred_y = state["y"] + state.get("vy", 0.0) * dt
             dist = math.hypot(mx - pred_x, my - pred_y)

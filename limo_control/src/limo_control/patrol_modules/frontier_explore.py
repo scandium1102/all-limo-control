@@ -127,7 +127,10 @@ class FrontierExplorer:
         robot_x, robot_y, _ = self._robot_pose
         centroid_x = sum(c[0] for c in cluster) / len(cluster)
         centroid_y = sum(c[1] for c in cluster) / len(cluster)
-        world_x, world_y = self._map_to_world(centroid_x, centroid_y)
+        free_cell = self._nearest_free_cell(cluster, centroid_x, centroid_y)
+        if free_cell is None:
+            return None
+        world_x, world_y = self._map_to_world(*free_cell)
         if not self._is_reachable(world_x, world_y):
             return None
         distance = math.hypot(world_x - robot_x, world_y - robot_y)
@@ -141,6 +144,31 @@ class FrontierExplorer:
                 score += 0.1
                 goal = FrontierGoal(map_xy=(world_x, world_y), heading_hint=heading, score=score)
         return goal
+
+    def _nearest_free_cell(
+        self,
+        cluster: List[Tuple[int, int]],
+        centroid_x: float,
+        centroid_y: float,
+    ) -> Optional[Tuple[int, int]]:
+        """Project an unknown frontier cluster onto a neighboring free cell."""
+        if self._map_array is None:
+            return None
+
+        h, w = self._map_array.shape
+        candidates = set()
+        for frontier_x, frontier_y in cluster:
+            for x in range(max(0, frontier_x - 1), min(w, frontier_x + 2)):
+                for y in range(max(0, frontier_y - 1), min(h, frontier_y + 2)):
+                    if self._map_array[y, x] == 0:
+                        candidates.add((x, y))
+
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda cell: math.hypot(cell[0] - centroid_x, cell[1] - centroid_y),
+        )
 
     def _map_to_world(self, ix: float, iy: float) -> Tuple[float, float]:
         ox, oy = self._origin

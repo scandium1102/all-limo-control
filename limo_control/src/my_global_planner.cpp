@@ -4,7 +4,7 @@
 #include <costmap_2d/costmap_2d.h>
 #include <nav_core/base_global_planner.h>
 #include <geometry_msgs/PoseStamped.h>
-#include <base_local_planner/costmap_model.h>
+#include <algorithm>
 #include <vector>
 #include <queue>
 #include <cmath>
@@ -109,6 +109,17 @@ public:
                 unsigned char cost = costmap_->getCost(nx, ny);
                 // 排除障礙物或未知區域
                 if (cost >= costmap_2d::LETHAL_OBSTACLE || cost == costmap_2d::NO_INFORMATION) continue;
+                // 對角線移動時禁止穿越兩個相鄰障礙物的角落。
+                if (dir_dx[i] != 0 && dir_dy[i] != 0) {
+                    const unsigned char x_cost = costmap_->getCost(cur_x + dir_dx[i], cur_y);
+                    const unsigned char y_cost = costmap_->getCost(cur_x, cur_y + dir_dy[i]);
+                    if (x_cost >= costmap_2d::LETHAL_OBSTACLE ||
+                        x_cost == costmap_2d::NO_INFORMATION ||
+                        y_cost >= costmap_2d::LETHAL_OBSTACLE ||
+                        y_cost == costmap_2d::NO_INFORMATION) {
+                        continue;
+                    }
+                }
                 // 計算臨時g成本
                 float step = dir_cost[i] + (float)cost / 252.0;  // 包含額外代價
                 float new_g = g_cost[current.index] + step;
@@ -125,7 +136,10 @@ public:
             return false;
         }
         // 重建從起點到目標的路徑
-        reconstructPath(start_index, goal_index, came_from, plan);
+        if (!reconstructPath(start_index, goal_index, came_from, plan) || plan.empty()) {
+            ROS_ERROR("Global planner failed to reconstruct a valid path");
+            return false;
+        }
         // 用精確的起終點替換路徑兩端
         plan.front() = start;
         plan.back() = goal;
@@ -153,7 +167,7 @@ private:
         return std::sqrt(dx * dx + dy * dy);
     }
     // 回溯came_from得到路徑，並轉為世界座標Pose
-    void reconstructPath(unsigned int start_index, unsigned int goal_index,
+    bool reconstructPath(unsigned int start_index, unsigned int goal_index,
                          const vector<int>& came_from,
                          vector<geometry_msgs::PoseStamped>& plan) {
         vector<unsigned int> indices;
@@ -161,11 +175,13 @@ private:
         indices.push_back(current);
         // 迴溯鏈直到起點
         while (current != start_index) {
-            current = came_from[current];
-            if (current == -1) {  // 理論上不會發生（保險起見）
+            const int parent = came_from[current];
+            if (parent < 0) {
                 ROS_ERROR("Failed to reconstruct path: incomplete path data.");
-                return;
+                plan.clear();
+                return false;
             }
+            current = static_cast<unsigned int>(parent);
             indices.push_back(current);
         }
         std::reverse(indices.begin(), indices.end());
@@ -186,6 +202,7 @@ private:
             pose.pose.orientation.w = 1.0;
             plan.push_back(pose);
         }
+        return true;
     }
 };  // class MyGlobalPlanner
 

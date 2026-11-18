@@ -13,9 +13,6 @@ from .stuck_recovery import StuckRecovery
 from .return_home import ReturnHome
 from .coverage_grid import CoverageGrid
 # 中期模組
-#from .sweep_planner import SweepPlanner
-#from .global_executor import GlobalExecutor
-#from .map_saver import MapSaver
 
 __all__ = [
     "SensorHub",

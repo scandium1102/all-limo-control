@@ -28,8 +28,8 @@ import message_filters
 from dynamic_reconfigure.server import Server as DynServer
 from limo_control.cfg import AvoidanceConfig, DepthHazardConfig
 
-from patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
-from patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
+from limo_control.patrol_modules.dynamic_tracker import DynamicTracker, TrackParams
+from limo_control.patrol_modules.lidar_avoid import AvoidParams, LidarAvoider
 
 
 @dataclass
