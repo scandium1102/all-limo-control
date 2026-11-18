@@ -1,4 +1,8 @@
-# LIMO Control
+# LIMO Navigation and Reactive Avoidance
+
+[Capstone case study and technical report](https://scandial-portfolio.scandium.chatgpt.site/project-limo.html) · [Project evidence and simulation figures](https://github.com/scandium1102/limo-autonomous-navigation)
+
+**Review path:** Read the architecture, inspect the ROS package, then run the repository checks below. The public package implements the navigation and avoidance layer. The capstone report also covers the language-to-goal integration, which is documented separately.
 
 ROS Noetic navigation and reactive-avoidance experiments for the AgileX LIMO
 platform. The repository records a student simulation prototype; it does not
@@ -72,7 +76,7 @@ roslaunch limo_control avoid_only.launch
 For the physical-sensor launch path:
 
 ```bash
-roslaunch limo_control avoid/avoid_with_depth.launch
+roslaunch limo_control avoid_with_depth.launch
 ```
 
 ## Validation
